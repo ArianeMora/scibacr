@@ -71,6 +71,22 @@ def dedup_gff(gff_file: str, output_file=None, feature_filter=None, source_filte
     return df
 
 
+def pileup_over_gene(gene_location:str, bam:str, ref:str):
+    """
+    Makes a pileup over a gene.
+
+    Rows are the reads, columns are the columns in the reference. Insertions are ignored.
+    Parameters
+    ----------
+    gene_location
+    bam
+    ref
+
+    Returns
+    -------
+
+    """
+
 def alignment_from_cigar(cigar: str, alignment: str, ref: str) -> tuple[str, str, list]:
     """
     Generate the alignment from the cigar string.
