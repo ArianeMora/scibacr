@@ -69,3 +69,124 @@ def dedup_gff(gff_file: str, output_file=None, feature_filter=None, source_filte
     df = df.drop(columns=[0])
     df.to_csv(f'{output_file}', sep='\t', index=False, header=False)
     return df
+
+
+def alignment_from_cigar(cigar: str, alignment: str, ref: str) -> tuple[str, str, list]:
+    """
+    Generate the alignment from the cigar string.
+    Operation	Description	Consumes query	Consumes reference
+    0 M	alignment match (can be a sequence match or mismatch)	yes	yes
+    1 I	insertion to the reference	yes	no
+    2 D	deletion from the reference	no	yes
+    3 N	skipped region from the reference	no	yes
+    4 S	soft clipping (clipped sequences present in SEQ)	yes	no
+    5 H	hard clipping (clipped sequences NOT present in SEQ)	no	no
+    6 P	padding (silent deletion from padded reference)	no	no
+    7 =	sequence match	yes	yes
+    8 X	sequence mismatch	yes	yes
+
+    Parameters
+    ----------
+    cigar: 49S9M1I24M2D9M2I23M1I3M1D13M1D10M1D13M3D12M1D23M1
+    alignment: GCTGATCACAACGAGAGCTCTCGTTGCTCATTACCCCTAAGGAACTCAAATGACGGTTAAAAACTTGTTTTGCT
+    ref: reference string (as above but from reference)
+
+    Returns
+    -------
+
+    """
+    new_seq = ''
+    ref_seq = ''
+    inserts = []
+    pos = 0
+    ref_pos = 0
+    for op, op_len in cigar:
+        if op == 0:  # alignment match (can be a sequence match or mismatch)
+            new_seq += alignment[pos:pos+op_len]
+            ref_seq += ref[ref_pos:ref_pos + op_len]
+            pos += op_len
+            ref_pos += op_len
+        elif op == 1:  # insertion to the reference
+            inserts.append(alignment[pos - 1:pos+op_len])
+            pos += op_len
+        elif op == 2:  # deletion from the reference
+            new_seq += '-'*op_len
+            ref_seq += ref[ref_pos:ref_pos + op_len]
+            ref_pos += op_len
+        elif op == 3:  # skipped region from the reference
+            new_seq += '*'*op_len
+            ref_pos += op_len
+        elif op == 4:  # soft clipping (clipped sequences present in SEQ)
+            inserts.append(alignment[pos:pos+op_len])
+            pos += op_len
+        elif op == 5:  # hard clipping (clipped sequences NOT present in SEQ)
+            continue
+        elif op == 6:  # padding (silent deletion from padded reference)
+            continue
+        elif op == 7:  # sequence mismatch
+            new_seq += alignment[pos:pos + op_len]
+            ref_seq += ref[ref_pos:ref_pos + op_len]
+            pos += op_len
+            ref_pos += op_len
+    return new_seq, ref_seq, inserts
+
+
+def alignment_from_cigar_inc_inserts(cigar: str, alignment: str, ref: str) -> tuple[str, str, list]:
+    """
+    Generate the alignment from the cigar string.
+    Operation	Description	Consumes query	Consumes reference
+    0 M	alignment match (can be a sequence match or mismatch)	yes	yes
+    1 I	insertion to the reference	yes	no
+    2 D	deletion from the reference	no	yes
+    3 N	skipped region from the reference	no	yes
+    4 S	soft clipping (clipped sequences present in SEQ)	yes	no
+    5 H	hard clipping (clipped sequences NOT present in SEQ)	no	no
+    6 P	padding (silent deletion from padded reference)	no	no
+    7 =	sequence match	yes	yes
+    8 X	sequence mismatch	yes	yes
+
+    Parameters
+    ----------
+    cigar: 49S9M1I24M2D9M2I23M1I3M1D13M1D10M1D13M3D12M1D23M1
+    alignment: GCTGATCACAACGAGAGCTCTCGTTGCTCATTACCCCTAAGGAACTCAAATGACGGTTAAAAACTTGTTTTGCT
+    ref: reference string (as above but from reference)
+
+    Returns
+    -------
+
+    """
+    new_seq = ''
+    ref_seq = ''
+    pos = 0
+    ref_pos = 0
+    for op, op_len in cigar:
+        if op == 0:  # alignment match (can be a sequence match or mismatch)
+            new_seq += alignment[pos:pos+op_len]
+            ref_seq += ref[ref_pos:ref_pos + op_len]
+            pos += op_len
+            ref_pos += op_len
+        elif op == 1:  # insertion to the reference
+            new_seq += alignment[pos:pos + op_len]
+            ref_seq += '^'*op_len
+            pos += op_len
+        elif op == 2:  # deletion from the reference
+            new_seq += '-'*op_len
+            ref_seq += ref[ref_pos:ref_pos + op_len]
+            ref_pos += op_len
+        elif op == 3:  # skipped region from the reference
+            new_seq += '*'*op_len
+            ref_pos += op_len
+        elif op == 4:  # soft clipping (clipped sequences present in SEQ)
+            new_seq += alignment[pos:pos + op_len]
+            ref_seq += '>' * op_len
+            pos += op_len
+        elif op == 5:  # hard clipping (clipped sequences NOT present in SEQ)
+            continue
+        elif op == 6:  # padding (silent deletion from padded reference)
+            continue
+        elif op == 7:  # sequence mismatch
+            new_seq += alignment[pos:pos + op_len]
+            ref_seq += ref[ref_pos:ref_pos + op_len]
+            pos += op_len
+            ref_pos += op_len
+    return new_seq, ref_seq

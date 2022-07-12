@@ -45,7 +45,7 @@ setup(name='scibacr',
               'scibacr = scibacr.__main__:main'
           ]
       },
-      install_requires=['pandas', 'numpy'],
+      install_requires=['pandas', 'numpy', 'pysam'],
       python_requires='>=3.6',
       data_files=[("", ["LICENSE"])]
       )
