@@ -199,9 +199,44 @@ class TestExample(unittest.TestCase):
     def test_cov_df(self):
         df = gen_coverage_over_genes(f'data/SRR13212638.sorted.bam',
                                      f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta',
-                                     'data/SRR13212638_GCF_000196035.1_ASM19603v1_genes-RNA.gff', min_coverage=0)
+                                     'data/SRR13212638_GCF_000196035.1_ASM19603v1_genes-RNA.gff', min_coverage=0,
+                                     max_coverage=20)
         print(df.head())
         df.to_csv('data/coverage.csv')
+
+    def test_training_gen(self):
+        samfile = pysam.AlignmentFile(f'data/SRR13212638.sorted.bam', "rb")
+        ref = pysam.FastaFile(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta')
+        gff = pd.read_csv(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genes-RNA.gff', header=None, sep='\t')
+        reads = []
+        pos = 'NC_003210.1:1546342-1546531'
+        name = 'SRR13212638'
+        kmer_len = 7
+        for read in samfile.fetch(pos):
+            reads.append(read)
+        if len(reads) > 100:
+            ref_str = ref[pos]
+            encodings = []
+            for read in reads:
+                seq, ref, qual, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str,
+                                                           read.query_qualities)
+                row = [read.query_name]
+                # Make it totally align
+                seq = "*" * read.reference_start + seq + "-" * (len(ref_str) - (read.reference_start + len(seq)))
+                qual = ([None] * read.reference_start) + qual + ([None] * (len(ref_str) - (read.reference_start + len(seq))))
+                row += list(np.array(list(seq)))
+                # Chunk the data...
+                chunked_seq, chunked_qual = chunk_data(seq, qual, kmer_len)
+
+                # Now we want to one hot encode the seq but add in the qual info...
+                for i, s in enumerate(chunked_seq):
+                    enc = one_hot_gencode(s, chunked_qual[i])
+                    encodings.append([name, pos, i*kmer_len] + list(enc.flatten()))  # Want to flatten it so that we can get it easy
+            df = pd.DataFrame(encodings)
+            df = df.dropna()
+            df.to_csv('data/training.csv', index=False)
+
+            # Check it's the same as the pileup...
 
     def test_cov(self):
         samfile = pysam.AlignmentFile(f'data/SRR13212638.sorted.bam', "rb")
@@ -216,7 +251,8 @@ class TestExample(unittest.TestCase):
             read_info = []
             rows = []
             for read in reads:
-                seq, ref, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str)
+                seq, ref, qual, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str,
+                                                           read.query_qualities)
                 row = [read.query_name]
                 # Make it totally align
                 seq = "*" * read.reference_start + seq + "-" * (
@@ -285,7 +321,7 @@ class TestExample(unittest.TestCase):
                     fout.write(f'>Reference\n')
                     fout.write(ref_str + '\n')
                     for read in reads:
-                        seq, ref, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str)
+                        seq, ref, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str, read.query_qualities)
                         row = [read.query_name]
                         # Make it totally align
                         seq = "-"*read.reference_start + seq + "-"*(len(ref_str) - (read.reference_start + len(seq)))
@@ -325,7 +361,9 @@ class TestExample(unittest.TestCase):
                 reads.append(read)
         read = reads[0]
         ref_str = ref[pos]
-        seq, ref, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str)
+        seq, ref, ins, qual = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str,
+                                                   read.query_qualities)
+        print("XXXXX", len(read.query_qualities), len(read.query_sequence))
         # Check the similarity
         sim = 0
         for i, s in enumerate(seq):
@@ -335,6 +373,7 @@ class TestExample(unittest.TestCase):
         print("new sequence & aligned reference")
         print(seq)
         print(ref)
+        print(''.join([str(i) for i in ins]))
         # We see that this is exactly the same :D
         print(ref_str[read.reference_start:read.reference_end])
 
@@ -359,7 +398,7 @@ class TestExample(unittest.TestCase):
                 reads.append(read)
         read = reads[0]
         ref_str = ref[pos]
-        seq, ref, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str)
+        seq, ref, ins, qual = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str, read.query_alignment_qualities)
         # Check the similarity
         sim = 0
         for i, s in enumerate(seq):
@@ -408,7 +447,7 @@ class TestExample(unittest.TestCase):
 
         # Looks correct :)
         print("As above but including the inserted sequences from the read")
-        s = alignment_from_cigar_inc_inserts(read.cigartuples, read.query_sequence, ref_str)
+        s = alignment_from_cigar_inc_inserts(read.cigartuples, read.query_sequence, ref_str, read.query_alignment_qualities)
         print(s[0])
         # It removes the clipping so add this in to look at it
         print('GCCACCCCGAAAAGGAGCGTTTTGTGCTATTT' + read.query_alignment_sequence)

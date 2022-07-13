@@ -19,6 +19,7 @@ import numpy as np
 import pysam
 from tqdm import tqdm
 
+
 def dedup_gff(gff_file: str, output_file=None, feature_filter=None, source_filter=None) -> pd.DataFrame:
     """
     Removes duplicate entries from a gff file. This can be needed when mapping reads to transcriptome.
@@ -71,6 +72,31 @@ def dedup_gff(gff_file: str, output_file=None, feature_filter=None, source_filte
     df = df.drop(columns=[0])
     df.to_csv(f'{output_file}', sep='\t', index=False, header=False)
     return df
+
+
+def gen_training_data(bam, ref, gff, min_coverage=20, max_coverage=100):
+    """
+
+    Parameters
+    ----------
+    bam
+    ref
+    gff
+    min_coverage
+    max_coverage
+
+    Returns
+    -------
+
+    """
+    return
+
+
+import math
+def chunk_data(x, y, chunk_size=7): # Use 7 as this means we can relate to eligos2
+    # https://stackoverflow.com/questions/13673060/split-string-into-strings-by-length
+    chunks, chunk_size = len(x), chunk_size
+    return [x[i:i+chunk_size] for i in range(0, chunks, chunk_size)], [y[i:i+chunk_size] for i in range(0, chunks, chunk_size)]
 
 
 def gen_coverage_over_genes(bam, ref, gff, min_coverage=20, max_coverage=1000):
@@ -171,7 +197,34 @@ def write_msa_over_gene(gene_location: str, bam, ref, output_filename=None):
             fout.write(f'{seq}\n')
 
 
-def alignment_from_cigar(cigar: str, alignment: str, ref: str) -> tuple[str, str, list]:
+def one_hot_gencode(seq, qual):
+    """
+    One hot encode but put in the quality info of that position
+    Parameters
+    ----------
+    seq
+    qual
+
+    Returns
+    -------
+
+    """
+    encoded = np.zeros((4, len(seq)))
+    for i, n in enumerate(seq):
+        if n == 'A':
+            encoded[0, i] = qual[i]  # We use qual to get the value
+        elif n == 'T':
+            encoded[1, i] = qual[i]  # We use qual to get the value
+        elif n == 'G':
+            encoded[2, i] = qual[i]  # We use qual to get the value
+        elif n == 'C':
+            encoded[3, i] = qual[i]  # We use qual to get the value
+        else:
+            encoded[0, i] = None  # This will be dropped later ToDo: think of a better way to incorperate deletions...
+    return encoded
+
+
+def alignment_from_cigar(cigar: str, alignment: str, ref: str, query_qualities: list) -> tuple[str, str, list, list]:
     """
     Generate the alignment from the cigar string.
     Operation	Description	Consumes query	Consumes reference
@@ -197,12 +250,15 @@ def alignment_from_cigar(cigar: str, alignment: str, ref: str) -> tuple[str, str
     """
     new_seq = ''
     ref_seq = ''
+    qual = []
     inserts = []
     pos = 0
     ref_pos = 0
     for op, op_len in cigar:
         if op == 0:  # alignment match (can be a sequence match or mismatch)
             new_seq += alignment[pos:pos+op_len]
+            qual += query_qualities[pos:pos + op_len]
+
             ref_seq += ref[ref_pos:ref_pos + op_len]
             pos += op_len
             ref_pos += op_len
@@ -211,10 +267,12 @@ def alignment_from_cigar(cigar: str, alignment: str, ref: str) -> tuple[str, str
             pos += op_len
         elif op == 2:  # deletion from the reference
             new_seq += '-'*op_len
+            qual += [-1]*op_len
             ref_seq += ref[ref_pos:ref_pos + op_len]
             ref_pos += op_len
         elif op == 3:  # skipped region from the reference
             new_seq += '*'*op_len
+            qual += [-2] * op_len
             ref_pos += op_len
         elif op == 4:  # soft clipping (clipped sequences present in SEQ)
             inserts.append(alignment[pos:pos+op_len])
@@ -226,9 +284,10 @@ def alignment_from_cigar(cigar: str, alignment: str, ref: str) -> tuple[str, str
         elif op == 7:  # sequence mismatch
             new_seq += alignment[pos:pos + op_len]
             ref_seq += ref[ref_pos:ref_pos + op_len]
+            qual += query_qualities[pos:pos + op_len]
             pos += op_len
             ref_pos += op_len
-    return new_seq, ref_seq, inserts
+    return new_seq, ref_seq, qual, inserts
 
 
 def alignment_from_cigar_inc_inserts(cigar: str, alignment: str, ref: str) -> tuple[str, str, list]:
