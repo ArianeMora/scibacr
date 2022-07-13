@@ -15,7 +15,9 @@
 #                                                                             #
 ###############################################################################
 import pandas as pd
-
+import numpy as np
+import pysam
+from tqdm import tqdm
 
 def dedup_gff(gff_file: str, output_file=None, feature_filter=None, source_filter=None) -> pd.DataFrame:
     """
@@ -71,21 +73,103 @@ def dedup_gff(gff_file: str, output_file=None, feature_filter=None, source_filte
     return df
 
 
-def pileup_over_gene(gene_location:str, bam:str, ref:str):
+def gen_coverage_over_genes(bam, ref, gff, min_coverage=20, max_coverage=1000):
     """
-    Makes a pileup over a gene.
 
-    Rows are the reads, columns are the columns in the reference. Insertions are ignored.
     Parameters
     ----------
-    gene_location
     bam
     ref
+    gff
+    min_coverage
+    max_coverage
 
     Returns
     -------
 
     """
+    bam = pysam.AlignmentFile(bam, "rb")
+    fasta = pysam.FastaFile(ref)
+    gff = pd.read_csv(gff, header=None, sep='\t')
+
+    positions = []
+    pos_to_info = {}
+    for line in gff.values:
+        positions.append(f'{line[0]}:{int(line[3]) - 1}-{int(line[4])}')
+        # Also keep track of the gene information
+        pos_to_info[f'{line[0]}:{int(line[3]) - 1}-{int(line[4])}'] = line[8].strip()
+
+    gene_rows = []
+    for pos in tqdm(positions):
+        reads = []
+        for read in bam.fetch(pos):
+            reads.append(read)
+        read_num = 0
+        if len(reads) > min_coverage:
+            ref_str = fasta[pos]
+            rows = []
+            for ri, read in enumerate(reads):
+                if read.query_sequence is not None:
+                    seq, ref, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str)
+                    row = [read.query_name]
+                    # Make it totally align
+                    seq = "*" * read.reference_start + seq + "-" * (
+                            len(ref_str) - (read.reference_start + len(seq)))
+                    row += list(np.array(list(seq)))
+                    rows.append(row)
+                    read_num += 1
+                    if read_num > max_coverage:
+                        break
+            rows = np.array(rows)
+            try:
+                sumarised = []  # np.zeros(len(ref_str)*4)
+                for i in range(0, len(ref_str)):
+                    sumarised.append(len(rows[rows[:, i] == 'A']))
+                    sumarised.append(len(rows[rows[:, i] == 'T']))
+                    sumarised.append(len(rows[rows[:, i] == 'G']))
+                    sumarised.append(len(rows[rows[:, i] == 'C']))
+                    sumarised.append(len(rows[rows[:, i] == '-']))  # Missing content (i.e. a deletion)
+                sumarised_arr = np.array(sumarised)
+                gene_rows.append([pos, pos_to_info[pos], np.mean(sumarised_arr), np.max(sumarised_arr),
+                                  np.var(sumarised_arr)] + sumarised)
+            except:
+                x = 1
+    df = pd.DataFrame(gene_rows)  # Can't give it columns since there will be differing column lengths
+    bam.close()
+    return df
+
+
+def write_msa_over_gene(gene_location: str, bam, ref, output_filename=None):
+    """
+    Makes a pileup over a gene and saves it as a MSA so one can view it in AliView.
+
+    Rows are the reads, columns are the columns in the reference. Insertions are ignored.
+    Parameters
+    ----------
+    gene_location: location (chr:start-end) note start might need to be -1 depending on how the transcriptome was created
+    bam: bam file read in by pysam, pysam.AlignmentFile(f'data/SRR13212638.sorted.bam', "rb")
+    ref: fasta file read in by pysam, pysam.FastaFile(sam/bam file)
+    output_filename
+
+    Returns
+    -------
+
+    """
+    reads = []
+    for read in bam.fetch(gene_location):
+        reads.append(read)
+    output_filename = output_filename or 'reads_msa_{gene_location}.fasta'
+    with open(output_filename, 'w') as fout:
+        ref_str = ref[gene_location]
+        fout.write(f'>Reference\n')
+        fout.write(ref_str + '\n')
+        for read in reads:
+            seq, ref, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str)
+            # Make it totally align
+            seq = "-" * read.reference_start + seq + "-" * (len(ref_str) - (read.reference_start + len(seq)))
+            fout.write(f'>{read.query_name}\n')
+            fout.write(f'{seq}\n')
+
 
 def alignment_from_cigar(cigar: str, alignment: str, ref: str) -> tuple[str, str, list]:
     """

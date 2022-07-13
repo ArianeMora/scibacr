@@ -23,6 +23,119 @@ import tempfile
 import unittest
 import numpy as np
 from scibacr import *
+import pysam
+import re, os, sys
+
+
+def filter_reads(reads, min_mapq=0):
+    #     reads = [read for read in reads if not read.alignment.is_supplementary and not read.alignment.is_unmapped and not read.alignment.is_duplicate and not read.is_refskip]
+    #     if min_mapq > 0:
+    #         reads = [read for read in reads if read.alignment.mapq >= min_mapq]
+    return reads
+
+
+def divided(x, y):
+    if x == 0 or y == 0:
+        return float(0)
+    else:
+        return float(x) / float(y)
+
+
+##### Decision modules
+def rvStrand(reverse, is_reverse, bam_type=None):
+    if bam_type == 'cdna':
+        return True
+    elif reverse == True and is_reverse:
+        return True
+    elif reverse == False and not is_reverse:
+        return True
+    else:
+        return False
+
+
+bam_type = None
+
+def get_mismatches(bamData, faidx, chrom, start, end, name=None, bam_type=None, reverse=False, max_depth=10000):
+    homopolymer = re.compile(r'(A{4,}|T{4,}|C{4,}|G{4,})', re.I)
+    outTmp = []
+
+    for pileupcolumn in bamData.pileup(chrom):
+        read_counts = 0
+        reads = filter_reads(pileupcolumn.pileups)
+        name = chrom
+        # reads_nodel = [read for read in reads if not read.is_del]
+        start_b = pileupcolumn.pos
+        end_b = start_b + 1
+        start_loc = start + start_b
+        end_loc = start_loc + 1
+
+        ref = faidx[chrom][start_b:end_b].upper()
+        kmer5 = faidx[chrom][start_b - 2:end_b + 2].upper()
+        kmer7 = faidx[chrom][start_b - 2:end_b + 4].upper()
+        strand = '-' if reverse else '+'
+
+        reads_o = len([read for read in reads if rvStrand(reverse, read.alignment.is_reverse, bam_type)])
+        matches_o, substitutions_o, substitutions_wo_ins_o = (0, 0, 0)
+        basesCounts = {"A": 0, "T": 0, "C": 0, "G": 0}
+
+        cdnaMajorAllele = False
+        for read in reads:
+            read_counts += 1
+            ## count matches, substitutions
+            if not read.is_del:
+                if rvStrand(reverse, read.alignment.is_reverse, bam_type):
+                    basesCounts[read.alignment.seq[read.query_position]] += 1
+                    if cdnaMajorAllele:
+                        if read.alignment.seq[read.query_position] == cdnaMajorAllele:
+                            matches_o += 1
+                        else:
+                            substitutions_o += 1
+                            if not read.indel > 0:
+                                substitutions_wo_ins_o += 1
+                    else:
+                        if read.alignment.seq[read.query_position] == ref:
+                            matches_o += 1
+                        else:
+                            substitutions_o += 1
+                            if not read.indel > 0:
+                                substitutions_wo_ins_o += 1
+
+        ## Major allel
+        majAllel = max(basesCounts, key=lambda k: basesCounts[k])
+        majAllelFreq = divided(basesCounts[majAllel], float(sum(basesCounts.values())))
+        ## homopolymer count
+        homoseq = "--"
+        test_start_home = start_b - 2 if start_b - 2 > 0 else 0
+        homo = homopolymer.search(faidx[chrom][test_start_home:start_b + 4])
+        if (homo):
+            homoseq = homo.group(1).upper()
+
+        deletions_o = len([read for read in reads
+                           if read.is_del and rvStrand(reverse, read.alignment.is_reverse, bam_type)])
+        insertions_o = len([read for read in reads
+                            if read.indel > 0 and rvStrand(reverse, read.alignment.is_reverse, bam_type)])
+        error_o = substitutions_wo_ins_o + insertions_o + deletions_o
+        o_ref = ''#complement(ref) if reverse else ref
+        o_kmer5 = ''#reversecomplement(kmer5) if reverse else kmer5
+        o_homoseq = ''#reversecomplement(homoseq) if reverse else homoseq
+        o_kmer7 = ''#reversecomplement(kmer7) if reverse else kmer7
+        o_majAllel = ''#reversecomplement(majAllel) if reverse else majAllel
+        ## for model matching
+        m_kmer5 = kmer5
+        m_kmer7 = kmer7
+        name = None
+        outTmp.append([chrom, start_loc, end_loc, strand, name, o_ref,
+                       reads_o, matches_o, error_o,
+                       substitutions_o, deletions_o, insertions_o,
+                       divided(error_o, reads_o),
+                       divided(substitutions_o, reads_o),
+                       divided(deletions_o, reads_o),
+                       divided(insertions_o, reads_o),
+                       o_homoseq, o_kmer5, o_majAllel, majAllelFreq, o_kmer7,
+                       m_kmer5, m_kmer7
+                       ])
+    return outTmp
+
 
 class TestExample(unittest.TestCase):
 
@@ -77,6 +190,128 @@ class TestExample(unittest.TestCase):
         f = list(set(new_gff.values[:, 2]))
         assert f == ['tRNA']
 
+    def test_msa(self):
+        samfile = pysam.AlignmentFile(f'data/SRR13212638.sorted.bam', "rb")
+        ref = pysam.FastaFile(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta')
+        pos = 'NC_003210.1:1546342-1546531'
+        write_msa_over_gene(pos, samfile, ref, 'data/msa.fasta')
+
+    def test_cov_df(self):
+        df = gen_coverage_over_genes(f'data/SRR13212638.sorted.bam',
+                                     f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta',
+                                     'data/SRR13212638_GCF_000196035.1_ASM19603v1_genes-RNA.gff', min_coverage=0)
+        print(df.head())
+        df.to_csv('data/coverage.csv')
+
+    def test_cov(self):
+        samfile = pysam.AlignmentFile(f'data/SRR13212638.sorted.bam', "rb")
+        ref = pysam.FastaFile(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta')
+        gff = pd.read_csv(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genes-RNA.gff', header=None, sep='\t')
+        reads = []
+        pos = 'NC_003210.1:1546342-1546531'
+        for read in samfile.fetch(pos):
+            reads.append(read)
+        if len(reads) > 100:
+            ref_str = ref[pos]
+            read_info = []
+            rows = []
+            for read in reads:
+                seq, ref, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str)
+                row = [read.query_name]
+                # Make it totally align
+                seq = "*" * read.reference_start + seq + "-" * (
+                            len(ref_str) - (read.reference_start + len(seq)))
+                row += list(np.array(list(seq)))
+                read_info.append({
+                    'start': read.reference_start,
+                    'end': read.reference_end,
+                    'seq': seq,
+                    'ins': ins,
+                    'name': read.query_name
+                })
+                rows.append(row)
+            rows = np.array(rows)
+            sumarised = [] #np.zeros(len(ref_str)*4)
+            for i in range(0, len(ref_str)):
+                sumarised.append(len(rows[rows[:, i] == 'A']))
+                sumarised.append(len(rows[rows[:, i] == 'T']))
+                sumarised.append(len(rows[rows[:, i] == 'G']))
+                sumarised.append(len(rows[rows[:, i] == 'C']))
+                sumarised.append(len(rows[rows[:, i] == '-']))  # Missing content (i.e. a deletion)
+            df = pd.DataFrame(rows, columns=["Name"] + [f'{c}-{i}' for i, c in enumerate(ref_str)] )#list(np.array(list(ref_str))))
+            print(df)
+            # Get value counts for each columns
+            # Now we can just summarise that
+            print(df['C-0'].value_counts())
+            print(df['A-3'].value_counts())
+            sumarised = np.array(sumarised)
+            print(sumarised.reshape((len(ref_str), 5)))
+            sumarised = sumarised.reshape((len(ref_str), 5))
+            assert sumarised[1][3] == 77  # Same as in the value counts
+            assert sumarised[4][2] == 3  # Same as in the value counts
+            assert sumarised[4][0] == 83  # Should be
+            assert sumarised[4][0] + sumarised[4][2] == 86  #
+            # Check it's the same as the pileup...
+            """
+            NC_003210.1:1546342-1546531     1       C       77      ^],^],^\,^],^],^\,^],^I,^],^],^],^],^Z,^=,^],^],^2,^],^H,^H,^],^M,^L,^],^],^],^L,^],^],^],^],^Z,^],^3,^.,^A,^],^Y,^],^],^],^],^],^],^],^],^],^<,^X,^],^],^],^C,^],^],^],^],^8,^],^],^$,^],^=,^H,^N,^],^],^],^*,^],^],^],^],^],^@,^],^], !!!!!!!!!!!=!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!>!!!!!!!!!<!!!!!!!!!!!!!!!!!!@!!<!
+            NC_003210.1:1546342-1546531     2       C       80      ,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,^%,^],^3,  !%,!!!!,)!(4!,$!!!!!$$$"!'!!$!!!!-!$!!!!!!!<!!!!(!!!!C!$!!!,!!!!!!!!!!!!:!!1(!!(
+            NC_003210.1:1546342-1546531     3       A       81      ,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,^],     !71!!/!00!*0!,+!!!!!5(/#!,!!1!!!!5!6!!!!!!!9!!&!0!!!!3!:!!!4%!!!!!!!'!!!2!$*+&2+!
+            NC_003210.1:1546342-1546531     4       A       86      ,,,,,,g,,,,,,,,,,,,g,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,-1t,,,g,,,,,,,,,,,,,,^;,^I,^W,^],^],     !-./!%!-5!'/!1+!!!!!0,&#!2!!1!!!!4!)!!!!!!!7!!+!5!!!!2!:!!!5(!!!!!!!*!!!*!+..)0$!!(!,%
+            NC_003210.1:1546342-1546531     5       T       87      ,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,*,,,,,,,,,,,,,,,,,,,,,,,^2,       !$03!.!/7!#0!2+!!!!!5%$#!9!!1!!!!4!9!!!!!!!8
+            """
+
+    def test_pileup(self):
+        """
+        For a given gene we want to get the letters that map to each position....
+        """
+        samfile = pysam.AlignmentFile(f'data/SRR13212638.sorted.bam', "rb")
+        ref = pysam.FastaFile(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta')
+        gff = pd.read_csv(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genes-RNA.gff', header=None, sep='\t')
+        positions = []
+        for line in gff.values:
+            try:
+                positions.append(f'{line[0]}:{int(line[3]) - 1}-{int(line[4])}')
+            except:
+                print(line)
+        for pos in positions:
+            reads = []
+            for read in samfile.fetch(pos):
+                reads.append(read)
+            if len(reads) > 100:
+                with open(f'data/reads_msa_{pos}.fasta', 'w') as fout:
+                    ref_str = ref[pos]
+                    read_info = []
+                    rows = []
+                    fout.write(f'>Reference\n')
+                    fout.write(ref_str + '\n')
+                    for read in reads:
+                        seq, ref, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str)
+                        row = [read.query_name]
+                        # Make it totally align
+                        seq = "-"*read.reference_start + seq + "-"*(len(ref_str) - (read.reference_start + len(seq)))
+                        fout.write(f'>{read.query_name}\n')
+                        fout.write(f'{seq}\n')
+                        row += list(np.array(list(seq)))
+                        read_info.append({
+                            'start': read.reference_start,
+                            'end': read.reference_end,
+                            'seq': seq,
+                            'ins': ins,
+                            'name': read.query_name
+                        })
+                        rows.append(row)
+                    df = pd.DataFrame(rows, columns=["Name"] + list(np.array(list(ref_str))))
+                    print(df)
+                    break
+            # except:
+            #     print(pos)
+        # NC_003210.1:1546342-1546531
+        # Check pileup column implementation
+        label = 'NC_003210.1:1546342-1546531'
+        ref = pysam.FastaFile(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta')
+        mm = get_mismatches(samfile, ref, label, 1546342, 1546531)  # Don't think this works correctly awks
+        print(mm)
+
     def test_reverse_alignment(self):
         """
         Seems to work the same? Looks like they reverse it and then just keep the tag for future references.
@@ -101,7 +336,7 @@ class TestExample(unittest.TestCase):
         print(seq)
         print(ref)
         # We see that this is exactly the same :D
-        print(ref_str[read.reference_start:read.reference_start + len(read.query_sequence)])
+        print(ref_str[read.reference_start:read.reference_end])
 
         print(read.get_aligned_pairs())
         print("Old query_alignment_sequence & old reference")
