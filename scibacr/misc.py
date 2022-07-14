@@ -99,6 +99,56 @@ def chunk_data(x, y, chunk_size=7): # Use 7 as this means we can relate to eligo
     return [x[i:i+chunk_size] for i in range(0, chunks, chunk_size)], [y[i:i+chunk_size] for i in range(0, chunks, chunk_size)]
 
 
+def gen_training(bam, ref, gff, output_filename=None, kmer_len=7, min_coverage=20, max_coverage=1000):
+    bam = pysam.AlignmentFile(bam, "rb")
+    fasta = pysam.FastaFile(ref)
+    gff = pd.read_csv(gff, header=None, sep='\t')
+
+    positions = []
+    pos_to_info = {}
+    for line in gff.values:
+        positions.append(f'{line[0]}:{int(line[3]) - 1}-{int(line[4])}')
+        # Also keep track of the gene information
+        pos_to_info[f'{line[0]}:{int(line[3]) - 1}-{int(line[4])}'] = line[8].strip()
+
+    encodings = []
+    for pos in tqdm(positions):
+        reads = []
+        for read in bam.fetch(pos):
+            reads.append(read)
+        read_num = 0
+        if len(reads) > min_coverage:
+            ref_str = fasta[pos]
+
+            for ri, read in enumerate(reads):
+                if read.query_sequence is not None:
+                    seq, ref, qual, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str,
+                                                               read.query_qualities)
+                    name = read.query_name
+                    # Make it totally align
+                    seq = "*" * read.reference_start + seq + "-" * (len(ref_str) - (read.reference_start + len(seq)))
+                    qual = ([None] * read.reference_start) + qual + (
+                                [None] * (len(ref_str) - (read.reference_start + len(seq))))
+                    # Chunk the data...
+                    chunked_seq, chunked_qual = chunk_data(seq, qual, kmer_len)
+
+                    # Now we want to one hot encode the seq but add in the qual info...
+                    for i, s in enumerate(chunked_seq):
+                        enc = one_hot_gencode(s, chunked_qual[i])
+                        encodings.append(
+                            [name, pos, i * kmer_len] + list(
+                                enc.flatten()))  # Want to flatten it so that we can get it easy
+                    read_num += 1
+                    if read_num > max_coverage:
+                        break
+    bam.close()
+    df = pd.DataFrame(encodings)
+    df = df.dropna()
+    if output_filename is not None:
+        df.to_csv(output_filename, index=False)
+    return df
+
+
 def gen_coverage_over_genes(bam, ref, gff, min_coverage=20, max_coverage=1000):
     """
 

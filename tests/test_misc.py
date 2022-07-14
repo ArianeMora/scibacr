@@ -204,6 +204,12 @@ class TestExample(unittest.TestCase):
         print(df.head())
         df.to_csv('data/coverage.csv')
 
+    def test_training(self):
+        df = gen_training(f'data/SRR13212638.sorted.bam',
+                          f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta',
+                          f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genes-RNA.gff')
+        print(df.head())
+
     def test_training_gen(self):
         samfile = pysam.AlignmentFile(f'data/SRR13212638.sorted.bam', "rb")
         ref = pysam.FastaFile(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta')
