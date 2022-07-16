@@ -204,6 +204,50 @@ class TestExample(unittest.TestCase):
         print(df.head())
         df.to_csv('data/coverage.csv')
 
+    def test_quality(self):
+        # df = gen_quality_data(f'data/SRR13212638.sorted.bam',
+        #                   f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genes-RNA.gff')
+        # print(df.head())
+        # df.to_csv(f'data/quality.csv', index=False)
+
+        # Test generating 5py version
+        gen_quality_h5py(f'data/SRR13212638.sorted.bam',
+                          f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genes-RNA.gff',
+                         'data/SRR13212638.h5',
+                         'SRR13212638')
+
+    def test_extract_quality(self):
+        data = h5py.File(f'data/SRR13212638.h5', 'r')
+        for k in data.keys(): #['NC_003210.1:1546342-1546531']:
+            if k == 'NC_003210.1:1546342-1546531':
+                for read in data[k]:
+                    if 'SRR13212638.205:' in read:
+                        print(k)
+                        read_quality = data[k][read]
+                        read_quality = [r for r in read_quality]
+                        print(read_quality)
+                        qual = [8,3,3,1,6,5,3,3,4,5,15,20,10,11,14,10,14,3,11,4,9,5,9,11,3,5,11,14,6,19,17,9,2,6,6,6,9,7,3,6,4,8,12,9,10,4,9,5,4,3,2,6,5,5,8,6,17,25,29,33,27,24,16,21,12,7,8,17,22,21,11,17,18,20,21,20,22,22,20,22,19,16,4,4,6,10,3,4,4,10,26,27.0,7.0,7.0,26.0,26.0,26.0,26.0,28.0,26.0,26.0,23.0,23.0,25.0,13.0,9.0,18.0,13.0,25.0,23.0,25.0,18.0,3.0,18.0,23.0,23.0,12.0,29.0,16.0,10.0,23.0,21.0,20.0,22.0,32.0,25.0,24.0,22.0,27.0,22.0,27.0,32.0,33.0,33.0,28.0,33.0,15.0,41.0,31.0,12.0,15.0,13.0,7.0,3.0,1.0,2.0,4.0,6.0,4.0,15.0,25.0,12.0,18.0,22.0,25.0,25.0,29.0,33.0,38.0,32.0,4.0,10.0,29.0,12.0,35.0,8.0,17.0,13.0,2.0,3.0,18.0,21.0,18.0,14.0,17.0,16.0,8.0,12.0,25.0,34.0,21.0,22.0,24.0,21.0,10.0,11.0,7.0,9.0,17.0,24.0,24.0,13.0,15.0,18.0,30.0,39.0,38.0,31.0,42.0,37.0,28.0,27.0,29.0,30.0,31.0,33.0,36.0,29.0,38.0,36.0,36.0,37.0,33.0,33.0,34.0,32.0,41.0,34.0,38.0,27.0,27.0,29.0,38.0,41.0,37.0,24.0,24.0,25.0,20.0,26.0,15.0,21.0,20.0,16.0]
+                        print(qual)
+                        assert np.sum(read_quality) == np.sum(qual, dtype=int)
+                        break
+            break
+
+    def test_gen_training_h5py(self):
+        gen_training_h5py(f'data/SRR13212638.sorted.bam',
+                          f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta',
+                          f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genes-RNA.gff',
+                          'data/training.h5')
+
+    def test_training_from_h5py(self):
+        # Check that we can get the same as we got in the csv
+        gene = 'NC_003210.1:1546342-1546531'  #
+        read = 'SRR13212638.205'
+        data = h5py.File(f'data/training.h5', 'r')
+        print(data[gene][read]['qual'][0]) # 8
+        print(''.join([chr(s)for s in data[gene][read]['seq']]))
+        print(data[gene][read]['seq'])
+
+
     def test_training(self):
         df = gen_training(f'data/SRR13212638.sorted.bam',
                           f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta',

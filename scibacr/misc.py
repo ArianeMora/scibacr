@@ -17,6 +17,7 @@
 import pandas as pd
 import numpy as np
 import pysam
+import h5py
 from tqdm import tqdm
 
 
@@ -74,7 +75,7 @@ def dedup_gff(gff_file: str, output_file=None, feature_filter=None, source_filte
     return df
 
 
-def gen_training_data(bam, ref, gff, min_coverage=20, max_coverage=100):
+def gen_quality_h5py(bam, gff, output_filename, min_coverage=20, max_coverage=1000):
     """
 
     Parameters
@@ -89,7 +90,82 @@ def gen_training_data(bam, ref, gff, min_coverage=20, max_coverage=100):
     -------
 
     """
-    return
+    bam = pysam.AlignmentFile(bam, "rb")
+    gff = pd.read_csv(gff, header=None, sep='\t')
+
+    positions = []
+    pos_to_info = {}
+    for line in gff.values:
+        positions.append(f'{line[0]}:{int(line[3]) - 1}-{int(line[4])}')
+        # Also keep track of the gene information
+        pos_to_info[f'{line[0]}:{int(line[3]) - 1}-{int(line[4])}'] = line[8].strip()
+
+    out_h = h5py.File(output_filename, 'w')
+    for pos in tqdm(positions):
+        reads = []
+        try:
+            for read in bam.fetch(pos):
+                reads.append(read)
+        except:
+            print(pos)
+        read_num = 0
+        if len(reads) > min_coverage:
+            for ri, read in enumerate(reads):
+                try:
+                    if read.query_sequence is not None:
+                        read_name = f'{read.query_name}:{read.reference_start}-{read.reference_end}'
+                        out_h.create_dataset(f'{pos}/{read_name}', data=np.array(read.query_qualities, dtype=np.int8))
+                        read_num += 1
+                        if read_num > max_coverage:
+                            break
+                except:
+                    print(read.query_name)
+    bam.close()
+    out_h.close()
+
+def gen_quality_data(bam, gff, output_filename=None, min_coverage=20, max_coverage=1000):
+    """
+
+    Parameters
+    ----------
+    bam
+    ref
+    gff
+    min_coverage
+    max_coverage
+
+    Returns
+    -------
+
+    """
+    bam = pysam.AlignmentFile(bam, "rb")
+    gff = pd.read_csv(gff, header=None, sep='\t')
+
+    positions = []
+    pos_to_info = {}
+    for line in gff.values:
+        positions.append(f'{line[0]}:{int(line[3]) - 1}-{int(line[4])}')
+        # Also keep track of the gene information
+        pos_to_info[f'{line[0]}:{int(line[3]) - 1}-{int(line[4])}'] = line[8].strip()
+
+    encodings = []
+    for pos in tqdm(positions):
+        reads = []
+        for read in bam.fetch(pos):
+            reads.append(read)
+        read_num = 0
+        if len(reads) > min_coverage:
+            for ri, read in enumerate(reads):
+                if read.query_sequence is not None:
+                    encodings.append([read.query_name, pos] + list(read.query_qualities))  # Want to flatten it so that we can get it easy
+                    read_num += 1
+                    if read_num > max_coverage:
+                        break
+    bam.close()
+    df = pd.DataFrame(encodings)
+    if output_filename is not None:
+        df.to_csv(output_filename, index=False)
+    return df
 
 
 import math
@@ -98,6 +174,52 @@ def chunk_data(x, y, chunk_size=7): # Use 7 as this means we can relate to eligo
     chunks, chunk_size = len(x), chunk_size
     return [x[i:i+chunk_size] for i in range(0, chunks, chunk_size)], [y[i:i+chunk_size] for i in range(0, chunks, chunk_size)]
 
+def gen_training_h5py(bam, ref, gff, output_filename, min_coverage=20, max_coverage=1000):
+    bam = pysam.AlignmentFile(bam, "rb")
+    fasta = pysam.FastaFile(ref)
+    gff = pd.read_csv(gff, header=None, sep='\t')
+
+    positions = []
+    pos_to_info = {}
+    for line in gff.values:
+        positions.append(f'{line[0]}:{int(line[3]) - 1}-{int(line[4])}')
+        # Also keep track of the gene information
+        pos_to_info[f'{line[0]}:{int(line[3]) - 1}-{int(line[4])}'] = line[8].strip()
+
+    out_h = h5py.File(output_filename, 'w')
+    for pos in tqdm(positions):
+        reads = []
+        try:
+            for read in bam.fetch(pos):
+                reads.append(read)
+        except:
+            print(pos)
+        read_num = 0
+        if len(reads) > min_coverage:
+            ref_str = fasta[pos]
+
+            for ri, read in enumerate(reads):
+                try:
+                    if read.query_sequence is not None:
+                        seq, ref, qual, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str,
+                                                                   read.query_qualities)
+                        read_name = read.query_name
+                        # Make it totally align
+                        seq = "*" * read.reference_start + seq + "-" * (len(ref_str) - (read.reference_start + len(seq)))
+                        qual = ([-1] * read.reference_start) + qual + (
+                                [-1] * (len(ref_str) - (read.reference_start + len(seq))))
+                        # Save sequence and quality for the read
+                        seq = [ord(c) for c in seq]
+                        out_h.create_dataset(f'{pos}/{read_name}/qual', data=np.array(qual, dtype=np.int8))
+                        out_h.create_dataset(f'{pos}/{read_name}/seq', data=np.array(seq, dtype=np.int8))
+
+                        read_num += 1
+                        if read_num > max_coverage:
+                            break
+                except:
+                    print(read.query_name)
+    bam.close()
+    out_h.close()
 
 def gen_training(bam, ref, gff, output_filename=None, kmer_len=7, min_coverage=20, max_coverage=1000):
     bam = pysam.AlignmentFile(bam, "rb")
