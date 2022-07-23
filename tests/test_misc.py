@@ -288,6 +288,12 @@ class TestExample(unittest.TestCase):
 
             # Check it's the same as the pileup...
 
+    def test_coverage_h5(self):
+        gen_coverage_over_genes_h5py(f'data/SRR13212638.sorted.bam',
+                                      f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta',
+                                      f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genes-RNA.gff',
+                                     'cov.h5')
+
     def test_cov(self):
         samfile = pysam.AlignmentFile(f'data/SRR13212638.sorted.bam', "rb")
         ref = pysam.FastaFile(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta')

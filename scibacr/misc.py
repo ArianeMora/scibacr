@@ -234,6 +234,7 @@ def gen_training(bam, ref, gff, output_filename=None, kmer_len=7, min_coverage=2
         pos_to_info[f'{line[0]}:{int(line[3]) - 1}-{int(line[4])}'] = line[8].strip()
 
     encodings = []
+
     for pos in tqdm(positions):
         reads = []
         for read in bam.fetch(pos):
@@ -270,6 +271,77 @@ def gen_training(bam, ref, gff, output_filename=None, kmer_len=7, min_coverage=2
         df.to_csv(output_filename, index=False)
     return df
 
+
+def gen_coverage_over_genes_h5py(bam, ref, gff, output_filename, min_coverage=20, max_coverage=1000):
+    """
+
+    Parameters
+    ----------
+    bam
+    ref
+    gff
+    min_coverage
+    max_coverage
+
+    Returns
+    -------
+
+    """
+    bam = pysam.AlignmentFile(bam, "rb")
+    fasta = pysam.FastaFile(ref)
+    gff = pd.read_csv(gff, header=None, sep='\t')
+
+    positions = []
+    pos_to_info = {}
+    for line in gff.values:
+        positions.append(f'{line[0]}:{int(line[3]) - 1}-{int(line[4])}')
+        # Also keep track of the gene information
+        pos_to_info[f'{line[0]}:{int(line[3]) - 1}-{int(line[4])}'] = line[8].strip()
+    out_h = h5py.File(output_filename, 'w')
+    for pos in tqdm(positions):
+        reads = []
+        try:
+            for read in bam.fetch(pos):
+                reads.append(read)
+        except:
+            print(pos)
+        read_num = 0
+        if len(reads) > min_coverage:
+            ref_str = fasta[pos]
+            rows = []
+            for ri, read in enumerate(reads):
+                if read.query_sequence is not None:
+                    try:
+                        seq, ref, qual, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str,
+                                                             read.query_qualities)
+                        row = [read.query_name]
+                        # Make it totally align
+                        seq = "*" * read.reference_start + seq + "-" * (
+                                len(ref_str) - (read.reference_start + len(seq)))
+                        row += list(np.array(list(seq)))
+
+                        rows.append(row)
+                        read_num += 1
+                        if read_num > max_coverage:
+                            break
+                    except:
+                        print(read.query_name)
+            rows = np.array(rows)
+            try:
+                sumarised = []
+                for i in range(0, len(ref_str)):
+                    sumarised.append(len(rows[rows[:, i] == 'A']))
+                    sumarised.append(len(rows[rows[:, i] == 'T']))
+                    sumarised.append(len(rows[rows[:, i] == 'G']))
+                    sumarised.append(len(rows[rows[:, i] == 'C']))
+                    sumarised.append(len(rows[rows[:, i] == '-']))  # Missing content (i.e. a deletion)
+                out_h.create_dataset(f'{pos}', data=np.array(sumarised, dtype=np.int8))
+                out_h[f'{pos}/{read.query_name}'].attrs['info'] = pos_to_info[pos]
+                out_h[f'{pos}/{read.query_name}'].attrs['reads'] = len(reads)
+            except:
+                x = 1
+    bam.close()
+    out_h.close()
 
 def gen_coverage_over_genes(bam, ref, gff, min_coverage=20, max_coverage=1000):
     """
@@ -356,7 +428,7 @@ def write_msa_over_gene(gene_location: str, bam, ref, output_filename=None):
     reads = []
     for read in bam.fetch(gene_location):
         reads.append(read)
-    output_filename = output_filename or 'reads_msa_{gene_location}.fasta'
+    output_filename = output_filename or f'reads_msa_{gene_location}.fasta'
     with open(output_filename, 'w') as fout:
         ref_str = ref[gene_location]
         fout.write(f'>Reference\n')
