@@ -205,14 +205,13 @@ def gen_training_h5py(bam, ref, gff, output_filename, min_coverage=20, max_cover
                                                                    read.query_qualities)
                         read_name = read.query_name
                         # Make it totally align
-                        seq = "*" * read.reference_start + seq + "-" * (len(ref_str) - (read.reference_start + len(seq)))
-                        qual = ([-1] * read.reference_start) + qual + (
-                                [-1] * (len(ref_str) - (read.reference_start + len(seq))))
+                        #seq = "*" * read.reference_start + seq + "-" * (len(ref_str) - (read.reference_start + len(seq)))
+                        #qual = ([0] * read.reference_start) + qual + ([0] * (len(ref_str) - (read.reference_start + len(seq))))
                         # Save sequence and quality for the read
                         seq = [ord(c) for c in seq]
                         out_h.create_dataset(f'{pos}/{read_name}/qual', data=np.array(qual, dtype=np.int8))
                         out_h.create_dataset(f'{pos}/{read_name}/seq', data=np.array(seq, dtype=np.int8))
-
+                        out_h[f'{pos}/{read_name}'].attrs['info'] = read.reference_start
                         read_num += 1
                         if read_num > max_coverage:
                             break
@@ -464,7 +463,11 @@ def one_hot_gencode(seq, qual):
         elif n == 'C':
             encoded[3, i] = qual[i]  # We use qual to get the value
         else:
+            # Fill them all with NA will later be filled with the mean value
             encoded[0, i] = None  # This will be dropped later ToDo: think of a better way to incorperate deletions...
+            encoded[1, i] = None  # This will be dropped later ToDo: think of a better way to incorperate deletions...
+            encoded[2, i] = None  # This will be dropped later ToDo: think of a better way to incorperate deletions...
+            encoded[3, i] = None  # This will be dropped later ToDo: think of a better way to incorperate deletions...
     return encoded
 
 

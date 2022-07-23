@@ -244,8 +244,11 @@ class TestExample(unittest.TestCase):
         read = 'SRR13212638.205'
         data = h5py.File(f'data/training.h5', 'r')
         print(data[gene][read]['qual'][0]) # 8
+        seq = [chr(s) for s in data[gene][read]['seq']]
         print(''.join([chr(s)for s in data[gene][read]['seq']]))
         print(data[gene][read]['seq'])
+        qual = [s for s in data[gene][read]['qual']]
+        print(len(seq), len(qual))
 
 
     def test_training(self):
