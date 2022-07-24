@@ -596,3 +596,51 @@ def alignment_from_cigar_inc_inserts(cigar: str, alignment: str, ref: str) -> tu
             pos += op_len
             ref_pos += op_len
     return new_seq, ref_seq
+
+
+def count_reads(bam_files: list, gff: str, gene_id_str='Name'):
+    """
+    Counts how many reads map to a gene. Output featurecounts style
+    Parameters
+    ----------
+    bam_files: list of bam files
+    gtf: reference
+    gene_id_str
+
+    Returns
+    -------
+
+    """
+    gff = pd.read_csv(gff, header=None, sep='\t')
+    gene_info = gff[8].values
+    # ToDo: generalise
+    gff['gene_name'] = [g.split(';')[0].replace(f'ID=', '') for g in gene_info]
+    starts = gff[3].values
+    ends = gff[4].values
+    gff['id'] = [f'{c}:{int(starts[i]) - 1}-{int(ends[i])}' for i, c in enumerate(gff[0].values)]
+    # Finally map the gene name to the id
+    gene_dict = dict(zip(gff['gene_name'].values, gff['id'].values))
+    bam_counts = {}
+    # Count the reads in a bam file
+    for bam_name in bam_files:
+        bam_gene_counts = {}
+        bam = pysam.AlignmentFile(bam_name, "rb")
+        for gene in gene_dict:
+            pos = gene_dict[gene]
+            reads = []
+            try:
+                for read in bam.fetch(pos):
+                    reads.append(read)
+                bam_gene_counts[gene] = len(reads)
+            except:
+                print(pos)
+        bam_counts[bam_name] = bam_gene_counts
+    # Now make a df
+    rows = []
+    for gene in gene_dict:
+        row = [gene]
+        for bam_name in bam_files:
+            row.append(bam_counts[bam_name].get(gene))
+        rows.append(row)
+    df = pd.DataFrame(rows, columns=['gene'] + [b.split('.')[0] for b in bam_files])
+    return df

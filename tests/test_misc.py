@@ -291,6 +291,10 @@ class TestExample(unittest.TestCase):
 
             # Check it's the same as the pileup...
 
+    def test_count_reads(self):
+        read_df = count_reads([f'data/SRR13212638.sorted.bam'], f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genes-RNA.gff')
+        read_df.to_csv(f'data/counts.csv', index=False)
+
     def test_coverage_h5(self):
         gen_coverage_over_genes_h5py(f'data/SRR13212638.sorted.bam',
                                       f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta',
