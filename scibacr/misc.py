@@ -15,6 +15,8 @@
 #                                                                             #
 ###############################################################################
 import pandas as pd
+from collections import defaultdict
+
 import numpy as np
 import pysam
 import h5py
@@ -598,14 +600,18 @@ def alignment_from_cigar_inc_inserts(cigar: str, alignment: str, ref: str) -> tu
     return new_seq, ref_seq
 
 
-def count_reads(bam_files: list, gff: str, gene_id_str='Name'):
+def count_reads(bam_files: list, gff: str, info_cols=['Name', 'gene', 'gene_biotype'],
+                ignore_multimapped_reads='quality'):
     """
-    Counts how many reads map to a gene. Output featurecounts style
+    Counts how many reads map to a gene. Output featurecounts style.
+
+    NZ_CP092052.1   RefSeq  gene    1006731 1007435 .   +   .   ID=gene-AH5667_RS04895;Name=AH5667_RS04895;gbkey=Gene;gene_biotype=protein_coding;locus_tag=AH5667_RS04895;old_locus_tag=AH5667_000935
     Parameters
     ----------
-    bam_files: list of bam files
-    gtf: reference
-    gene_id_str
+    bam_files: list of paths to bam files
+    gtf: path to reference (expect the transcriptome)
+    info_cols: columns to keep from the gff info file (e.g. from that last column)
+    ID=gene-AH5667_RS04895;Name=AH5667_RS04895;gbkey so selecting ['ID', 'Name'] would keep those two...
 
     Returns
     -------
@@ -621,26 +627,82 @@ def count_reads(bam_files: list, gff: str, gene_id_str='Name'):
     # Finally map the gene name to the id
     gene_dict = dict(zip(gff['gene_name'].values, gff['id'].values))
     bam_counts = {}
+
     # Count the reads in a bam file
+    qualities = []
     for bam_name in bam_files:
-        bam_gene_counts = {}
+        bam_gene_reads = {}
+        all_reads = defaultdict(list)
         bam = pysam.AlignmentFile(bam_name, "rb")
         for gene in gene_dict:
             pos = gene_dict[gene]
             reads = []
             try:
                 for read in bam.fetch(pos):
-                    reads.append(read)
-                bam_gene_counts[gene] = len(reads)
+                    reads.append(read.query_name)
+                    if ignore_multimapped_reads:
+                        # We add the name of the read so remove any second mappings
+                        # We'll keep only the highest quality mapping...
+                        # Check if quality > 0...
+                        if read.mapping_quality > 0:
+                            all_reads[read.query_name].append([gene, np.mean(read.query_qualities), read.mapping_quality])
+                        qualities.append(read.mapping_quality)
+                bam_gene_reads[gene] = reads
             except:
                 print(pos)
+        bam_gene_counts = {}
+        # Now check for mulitmapping
+
+        if ignore_multimapped_reads:
+            top_quality_gene_reads = defaultdict(list)
+            total_multi = 0
+            total_single = 0
+            for read, reads in all_reads.items():
+                if len(reads) > 1:
+                    total_multi += 1
+                else:
+                    total_single += 1
+                # Make only 1 map
+                top_quality_gene = max(reads, key=lambda item: item[1])
+                top_quality_gene_reads[top_quality_gene[0]].append(top_quality_gene[1])
+            # Now get the counts for genes
+            for gene in gene_dict:
+                bam_gene_counts[gene] = len(top_quality_gene_reads[gene])
+            # for gene in gene_dict:
+            #     # Get only reads that map a single time
+            #     multimapped_reads = [r for r in bam_gene_reads[gene] if len(all_reads[r]) > 1]
+            #     single_reads = [r for r in bam_gene_reads[gene] if len(all_reads[r]) == 1]
+            #     # Top quality reads
+            #     top_reads = [max(r, key=lambda item: item[1]) for r in bam_gene_reads[gene])
+            #     bam_gene_counts[gene] = len(single_reads)
+            #     total_single += len(single_reads)
+            #     total_multi += len(multimapped_reads)
+            print(bam_name, total_multi, total_single, total_single/(total_single + total_multi))
+        else:
+            for gene in gene_dict:
+                bam_gene_counts[gene] = len(bam_gene_reads[gene])
+
         bam_counts[bam_name] = bam_gene_counts
     # Now make a df
+    print(qualities)
     rows = []
+    gene_to_gene_info = {}
+    for info in gene_info:
+        info = info.split(';')
+        vals = []
+        for g in info_cols:
+            found = False
+            for i in info:
+                if g == i.split('=')[0]:
+                    vals.append(i.split('=')[-1])
+                    found = True
+            if not found:
+                vals.append(None)
+        gene_to_gene_info[info[0].replace(f'ID=', '')] = vals
     for gene in gene_dict:
-        row = [gene]
+        row = [gene] + gene_to_gene_info[gene]
         for bam_name in bam_files:
             row.append(bam_counts[bam_name].get(gene))
         rows.append(row)
-    df = pd.DataFrame(rows, columns=['gene'] + [b.split('.')[0] for b in bam_files])
+    df = pd.DataFrame(rows, columns=['gene'] + info_cols + [b.split('/')[-1].split('.')[0] for b in bam_files])
     return df
