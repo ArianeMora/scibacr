@@ -16,12 +16,19 @@
 ###############################################################################
 import pandas as pd
 from collections import defaultdict
-
+from scipy.stats import fisher_exact
+from statsmodels.stats.multitest import multipletests
+from tqdm import tqdm
 import numpy as np
 import pysam
 import h5py
 from tqdm import tqdm
 
+import matplotlib.pyplot as plt
+import numpy as np
+from collections import defaultdict
+from wordcloud import WordCloud
+import seaborn as sns
 
 def dedup_gff(gff_file: str, output_file=None, feature_filter=None, source_filter=None) -> pd.DataFrame:
     """
@@ -662,7 +669,7 @@ def count_reads(bam_files: list, gff: str, info_cols=['Name', 'gene', 'gene_biot
                     total_multi += 1
                 else:
                     total_single += 1
-                # Make only 1 map
+                # Make only 1 map (change the index if you want something different)
                 top_quality_gene = max(reads, key=lambda item: item[1])
                 top_quality_gene_reads[top_quality_gene[0]].append(top_quality_gene[1])
             # Now get the counts for genes
@@ -706,3 +713,188 @@ def count_reads(bam_files: list, gff: str, info_cols=['Name', 'gene', 'gene_biot
         rows.append(row)
     df = pd.DataFrame(rows, columns=['gene'] + info_cols + [b.split('/')[-1].split('.')[0] for b in bam_files])
     return df
+
+# Vis is sometimes easier to do not on the server so I'm going to look at an ORA
+# of the GO terms
+from scipy.stats import fisher_exact
+from statsmodels.stats.multitest import multipletests
+from sciutil import SciUtil, SciException
+from sciviso import Emapplot
+import pandas as pd
+
+
+def plot_clusters_go_enrichment(filename, gene_ratio_min=1, padj_max=0.05, title='GO', fig_dir='',
+                    label_font_size=10, figsize=(5, 5), axis_font_size=8,save_fig=True,
+                    padj_col='p.adj'):
+    odds_ratio_df = pd.read_csv(filename)
+    r_df = odds_ratio_df[odds_ratio_df['genes with GO and in cluster'] > gene_ratio_min]
+    r_df = r_df[r_df[padj_col] < padj_max]
+    r = title
+    if len(r_df) > 1:
+        eplot = Emapplot(r_df,
+                         size_column='genes with GO and in cluster',
+                         color_column='genes in cluster but not GO',
+                         id_column='GO',
+                         label_column='Label',
+                         overlap_column='gene_names', overlap_sep=' ', title=r,
+                         config={'figsize': figsize, 'label_font_size': label_font_size,
+                                 'axis_font_size': axis_font_size})
+        eplot.build_graph()
+        plt.title(title)
+        plt.gca().set_clip_on = False
+        if save_fig:
+            plt.savefig(f'{fig_dir}GO_{title.replace(" ", "-")}_network.svg', bbox_inches='tight',
+                        transparent=True)
+        plt.show()
+
+        x, y = np.ogrid[:300, :300]
+
+        mask = (x - 150) ** 2 + (y - 150) ** 2 > 130 ** 2
+        mask = 255 * mask.astype(int)
+        wordfeqs = defaultdict(int)
+        for g in r_df['gene_names'].values:
+            for w in g.split(' '):
+                w = w.replace(' ', '.')
+                wordfeqs[w] += 1
+        total_words = len(wordfeqs)
+        for w in wordfeqs:
+            wordfeqs[w] = wordfeqs[w] / total_words
+        wordcloud = WordCloud(background_color="white", mask=mask, colormap='viridis',
+                              repeat=False).generate_from_frequencies(wordfeqs)
+
+        plt.figure()
+        plt.rcParams['svg.fonttype'] = 'none'  # Ensure text is saved as text
+        plt.rcParams['figure.figsize'] = figsize
+        font_family = 'sans-serif'
+        font = 'Arial'
+        sns.set(rc={'figure.figsize': figsize, 'font.family': font_family,
+                    'font.sans-serif': font, 'font.size': 12}, style='ticks')
+        plt.figure()
+        plt.imshow(wordcloud, interpolation="bilinear")
+        plt.axis("off")
+        if save_fig:
+            wordcloud_svg = wordcloud.to_svg(embed_font=True)
+            f = open(f'{fig_dir}GO_{r}_WordCloud.svg', "w+")
+            f.write(wordcloud_svg)
+            f.close()
+            plt.savefig(f'{fig_dir}GO_{r}_WordCloud.png', bbox_inches='tight')
+        plt.show()
+
+
+def run_go_enrichment(df_filename: str, go_term_filename: str, go_info_filename: str, df_gene_id='Name',
+                      go_gene_id='gene', go_term='term', padj_col='padj_rna', logfc_col='logFC_rna',
+                      logfc_cutoff=1.0, padj_cutoff=0.05, comparison='DE_analysis',
+                      go_info_go_id='GO', go_info_description_id='Label'):
+    """
+
+    Parameters
+    ----------
+    df_filename: Results from DE anlaysis like DEseq2
+    go_term_filename: GO file with two columns, gene & term
+    go_info_filename: GO file with info for the go terms, should at least have GO id and GO name/label
+    df_gene_id: column label in the df that has the gene ID in it
+    go_gene_id: column label in the go DF that has the gene ID in it (needs to match)
+    go_term: column label in the go DF that has the GO term in it
+    padj_col: column in the DE df that has the padj in it
+    logfc_col: column in the DE df that has the logFC in it
+    logfc_cutoff: cutoff for logFC in the DE DF
+    padj_cutoff: cutoff for padj in the DE DF
+    comparison: label of the  run.
+    go_info_go_id: column in the go_info_filename that has the GO id value i.e. GO:121212
+    go_info_description_id: column in go_info_filename that has the description/name/label of the GO term
+
+    Returns
+    -------
+
+    """
+    df = pd.read_csv(df_filename)
+    gene_go_df = pd.read_csv(go_term_filename)
+    go_info_df = pd.read_csv(go_info_filename)
+    columns = ['GO', 'p-value', 'odds-ratio',
+               'genes with GO and in cluster',
+               'genes in cluster but not GO',
+               'genes in GO but not cluster',
+               'genes not in GO or cluster',
+               'gene_names']
+    rows = []
+    all_bg_genes = list(set(df[df_gene_id].values))
+    term_to_label = dict(zip(go_info_df[go_info_go_id].values, go_info_df[go_info_description_id].values))
+    sig = df[df[padj_col] < padj_cutoff]
+    print(len(sig), len(df))
+    if logfc_cutoff > 0:
+        sig = sig[sig[logfc_col] > logfc_cutoff]
+    else:
+        sig = sig[sig[logfc_col] < logfc_cutoff]
+    print(len(sig), len(df))
+    cluster_genes = list(set(sig[df_gene_id].values))
+    gene_id = go_gene_id
+    for go in tqdm(gene_go_df[go_term].unique()):
+        go_df = gene_go_df[gene_go_df[go_term] == go]
+        go_enriched_genes = list(set(list(go_df[gene_id].values)))
+        go_enriched_genes = [g for g in go_enriched_genes if g in all_bg_genes]
+        cont_table = np.zeros((2, 2))  # Rows=ct, not ct; Cols=Module, not Modul
+        if len(go_enriched_genes) > 3:  # Some DE genes
+            in_go_and_cluster = len(set(cluster_genes) & set(go_enriched_genes))
+            cluster_not_go = len(cluster_genes) - in_go_and_cluster
+            go_not_cluster = len(go_enriched_genes) - in_go_and_cluster
+            bg_genes = [g for g in all_bg_genes if g not in cluster_genes]
+            if in_go_and_cluster > 3:  # Require there to be at least 3 genes overlapping
+                not_go_not_cluster = len(bg_genes) - (in_go_and_cluster + cluster_not_go + go_not_cluster)
+                # Populating cont table
+                cont_table[0, 0] = in_go_and_cluster
+                cont_table[1, 0] = cluster_not_go
+                cont_table[0, 1] = go_not_cluster
+                cont_table[1, 1] = not_go_not_cluster
+                # Doing FET, Enrichment IN GO only.
+                odds_ratio, pval = fisher_exact(cont_table, alternative="greater")
+                genes_ids = list(set(cluster_genes) & set(go_enriched_genes))
+                rows.append([go, pval, odds_ratio, in_go_and_cluster,
+                             cluster_not_go, go_not_cluster, not_go_not_cluster,
+                             ' '.join(genes_ids)])
+    odds_ratio_df = pd.DataFrame(data=rows, columns=columns)
+    reg, padj, a, b = multipletests(odds_ratio_df['p-value'].values,
+                                    alpha=0.05, method='fdr_bh', returnsorted=False)
+    odds_ratio_df['p.adj'] = padj
+    ## For each gene pull out the sequence from the transcriptome file for each of our references
+    odds_ratio_df['Label'] = [term_to_label.get(g) for g in odds_ratio_df['GO'].values]
+    odds_ratio_df.to_csv(f'{comparison}_odds_ratio.csv', index=False)
+    return odds_ratio_df
+
+
+def convert_gaf_to_csv(gaf_file: str, go_term_output_file: str, go_info_output_file: str):
+    """
+    Converts a gaf file format to csv with term to gene so that we have easy access to these relationships
+
+    Parameters
+    ----------
+    gaf_file
+    go_term_output_file
+    go_info_output_file
+
+    Returns
+    -------
+
+    """
+
+    gene_go = []
+    gene_rows = []
+    with open(gaf_file, 'r') as f:
+        for line in f:
+            if line[0] != '#' and line[0] != '!':
+                line = line.split('\t')
+                gene_go.append([line[2], line[4]])
+                gene_rows.append(line)
+    gene_go_df = pd.DataFrame(gene_go, columns=['gene', 'term'])
+
+    all_go_df = pd.DataFrame(gene_rows,
+                             columns=['UniprotID', 'ID', 'gene', 'Term thing', 'GO', 'PMID', 'Acc', 'Long', 'L',
+                                      'Label', 'genes', 'Type', 'Taxon', 'taxID', 'Source', 'NA', 'NA'])
+
+    # Remove dups incase of different sources....
+    all_go_df = all_go_df.drop_duplicates()
+    all_go_df.to_csv(go_info_output_file, index=False)
+
+    gene_go_df = gene_go_df.drop_duplicates()
+    gene_go_df.to_csv(go_term_output_file, index=False)
+
+
