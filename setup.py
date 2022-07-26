@@ -45,7 +45,7 @@ setup(name='scibacr',
               'scibacr = scibacr.__main__:main'
           ]
       },
-      install_requires=['pandas', 'numpy', 'pysam', 'tqdm', 'import h5py'],
+      install_requires=['pandas', 'numpy', 'pysam', 'tqdm', 'import h5py', 'sciviso', 'statsmodels', 'scipy'],
       python_requires='>=3.6',
       data_files=[("", ["LICENSE"])]
       )

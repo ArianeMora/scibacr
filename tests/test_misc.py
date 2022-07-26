@@ -26,116 +26,6 @@ import pysam
 import re, os, sys
 
 
-def filter_reads(reads, min_mapq=0):
-    #     reads = [read for read in reads if not read.alignment.is_supplementary and not read.alignment.is_unmapped and not read.alignment.is_duplicate and not read.is_refskip]
-    #     if min_mapq > 0:
-    #         reads = [read for read in reads if read.alignment.mapq >= min_mapq]
-    return reads
-
-
-def divided(x, y):
-    if x == 0 or y == 0:
-        return float(0)
-    else:
-        return float(x) / float(y)
-
-
-##### Decision modules
-def rvStrand(reverse, is_reverse, bam_type=None):
-    if bam_type == 'cdna':
-        return True
-    elif reverse == True and is_reverse:
-        return True
-    elif reverse == False and not is_reverse:
-        return True
-    else:
-        return False
-
-
-bam_type = None
-
-def get_mismatches(bamData, faidx, chrom, start, end, name=None, bam_type=None, reverse=False, max_depth=10000):
-    homopolymer = re.compile(r'(A{4,}|T{4,}|C{4,}|G{4,})', re.I)
-    outTmp = []
-
-    for pileupcolumn in bamData.pileup(chrom):
-        read_counts = 0
-        reads = filter_reads(pileupcolumn.pileups)
-        name = chrom
-        # reads_nodel = [read for read in reads if not read.is_del]
-        start_b = pileupcolumn.pos
-        end_b = start_b + 1
-        start_loc = start + start_b
-        end_loc = start_loc + 1
-
-        ref = faidx[chrom][start_b:end_b].upper()
-        kmer5 = faidx[chrom][start_b - 2:end_b + 2].upper()
-        kmer7 = faidx[chrom][start_b - 2:end_b + 4].upper()
-        strand = '-' if reverse else '+'
-
-        reads_o = len([read for read in reads if rvStrand(reverse, read.alignment.is_reverse, bam_type)])
-        matches_o, substitutions_o, substitutions_wo_ins_o = (0, 0, 0)
-        basesCounts = {"A": 0, "T": 0, "C": 0, "G": 0}
-
-        cdnaMajorAllele = False
-        for read in reads:
-            read_counts += 1
-            ## count matches, substitutions
-            if not read.is_del:
-                if rvStrand(reverse, read.alignment.is_reverse, bam_type):
-                    basesCounts[read.alignment.seq[read.query_position]] += 1
-                    if cdnaMajorAllele:
-                        if read.alignment.seq[read.query_position] == cdnaMajorAllele:
-                            matches_o += 1
-                        else:
-                            substitutions_o += 1
-                            if not read.indel > 0:
-                                substitutions_wo_ins_o += 1
-                    else:
-                        if read.alignment.seq[read.query_position] == ref:
-                            matches_o += 1
-                        else:
-                            substitutions_o += 1
-                            if not read.indel > 0:
-                                substitutions_wo_ins_o += 1
-
-        ## Major allel
-        majAllel = max(basesCounts, key=lambda k: basesCounts[k])
-        majAllelFreq = divided(basesCounts[majAllel], float(sum(basesCounts.values())))
-        ## homopolymer count
-        homoseq = "--"
-        test_start_home = start_b - 2 if start_b - 2 > 0 else 0
-        homo = homopolymer.search(faidx[chrom][test_start_home:start_b + 4])
-        if (homo):
-            homoseq = homo.group(1).upper()
-
-        deletions_o = len([read for read in reads
-                           if read.is_del and rvStrand(reverse, read.alignment.is_reverse, bam_type)])
-        insertions_o = len([read for read in reads
-                            if read.indel > 0 and rvStrand(reverse, read.alignment.is_reverse, bam_type)])
-        error_o = substitutions_wo_ins_o + insertions_o + deletions_o
-        o_ref = ''#complement(ref) if reverse else ref
-        o_kmer5 = ''#reversecomplement(kmer5) if reverse else kmer5
-        o_homoseq = ''#reversecomplement(homoseq) if reverse else homoseq
-        o_kmer7 = ''#reversecomplement(kmer7) if reverse else kmer7
-        o_majAllel = ''#reversecomplement(majAllel) if reverse else majAllel
-        ## for model matching
-        m_kmer5 = kmer5
-        m_kmer7 = kmer7
-        name = None
-        outTmp.append([chrom, start_loc, end_loc, strand, name, o_ref,
-                       reads_o, matches_o, error_o,
-                       substitutions_o, deletions_o, insertions_o,
-                       divided(error_o, reads_o),
-                       divided(substitutions_o, reads_o),
-                       divided(deletions_o, reads_o),
-                       divided(insertions_o, reads_o),
-                       o_homoseq, o_kmer5, o_majAllel, majAllelFreq, o_kmer7,
-                       m_kmer5, m_kmer7
-                       ])
-    return outTmp
-
-
 class TestExample(unittest.TestCase):
 
     def setUp(self):
@@ -153,6 +43,32 @@ class TestExample(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.tmp_dir)
+
+
+    def test_kmer_sliding(self):
+        gen_kmer_sliding_window_ref(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta', 6,
+                                    'data/kmer_6.h5', genes=['NC_003210.1:1000534-1001425', 'NC_003210.1:1008129-1008879'])
+
+    def test_kmer_extraction(self):
+        kmer = 'GAAGAT'
+        kmer_h5 = h5py.File('data/kmer_6.h5', 'r')
+        kmer_data = kmer_h5[kmer]
+        print(kmer_data.keys())
+        for k in kmer_data.keys():
+            for position in kmer_data[k]:
+                print(position)
+
+    def test_dict_meta(self):
+        read_dict = gen_mapping_gene_read_dict_meta(f'data/WT-K12_MG1655_genome.sorted.bam', f'data/ssu_all_r207_gr1400.gff')
+        print(read_dict['RS_GCF_002942685.1~NZ_PTNW01000082.1'])
+        assert '7bfc9ef7-f783-4ef0-a89a-fc56645687ff_Basecall_1D_template' in read_dict['RS_GCF_002942685.1~NZ_PTNW01000082.1']
+        gen_training_h5py_position('data/WT-K12_MG1655_genome.sorted.bam', 'data/ssu_all_r207_gr1400.fna', read_dict,
+                                   output_filename='data/training_meta.h5',
+                                   min_coverage=20, max_coverage=100)
+
+    def test_counts_meta(self):
+        df = count_reads_meta([f'data/WT-K12_MG1655_genome.sorted.bam'], f'data/ssu_all_r207_gr1400.gff', transcriptome=False)
+        df.to_csv('data/metagenome.csv')
 
     def test_dedup_gff(self):
         gff = 'data/GCF_000026545.1_ASM2654v1_genomic.gff'
@@ -527,4 +443,114 @@ class TestExample(unittest.TestCase):
         # reads.query_alignment_length
         # reads.query_alignment_qualities
         # reads.query_alignment_sequence
+
+
+def filter_reads(reads, min_mapq=0):
+    #     reads = [read for read in reads if not read.alignment.is_supplementary and not read.alignment.is_unmapped and not read.alignment.is_duplicate and not read.is_refskip]
+    #     if min_mapq > 0:
+    #         reads = [read for read in reads if read.alignment.mapq >= min_mapq]
+    return reads
+
+
+def divided(x, y):
+    if x == 0 or y == 0:
+        return float(0)
+    else:
+        return float(x) / float(y)
+
+
+##### Decision modules
+def rvStrand(reverse, is_reverse, bam_type=None):
+    if bam_type == 'cdna':
+        return True
+    elif reverse == True and is_reverse:
+        return True
+    elif reverse == False and not is_reverse:
+        return True
+    else:
+        return False
+
+
+bam_type = None
+
+def get_mismatches(bamData, faidx, chrom, start, end, name=None, bam_type=None, reverse=False, max_depth=10000):
+    homopolymer = re.compile(r'(A{4,}|T{4,}|C{4,}|G{4,})', re.I)
+    outTmp = []
+
+    for pileupcolumn in bamData.pileup(chrom):
+        read_counts = 0
+        reads = filter_reads(pileupcolumn.pileups)
+        name = chrom
+        # reads_nodel = [read for read in reads if not read.is_del]
+        start_b = pileupcolumn.pos
+        end_b = start_b + 1
+        start_loc = start + start_b
+        end_loc = start_loc + 1
+
+        ref = faidx[chrom][start_b:end_b].upper()
+        kmer5 = faidx[chrom][start_b - 2:end_b + 2].upper()
+        kmer7 = faidx[chrom][start_b - 2:end_b + 4].upper()
+        strand = '-' if reverse else '+'
+
+        reads_o = len([read for read in reads if rvStrand(reverse, read.alignment.is_reverse, bam_type)])
+        matches_o, substitutions_o, substitutions_wo_ins_o = (0, 0, 0)
+        basesCounts = {"A": 0, "T": 0, "C": 0, "G": 0}
+
+        cdnaMajorAllele = False
+        for read in reads:
+            read_counts += 1
+            ## count matches, substitutions
+            if not read.is_del:
+                if rvStrand(reverse, read.alignment.is_reverse, bam_type):
+                    basesCounts[read.alignment.seq[read.query_position]] += 1
+                    if cdnaMajorAllele:
+                        if read.alignment.seq[read.query_position] == cdnaMajorAllele:
+                            matches_o += 1
+                        else:
+                            substitutions_o += 1
+                            if not read.indel > 0:
+                                substitutions_wo_ins_o += 1
+                    else:
+                        if read.alignment.seq[read.query_position] == ref:
+                            matches_o += 1
+                        else:
+                            substitutions_o += 1
+                            if not read.indel > 0:
+                                substitutions_wo_ins_o += 1
+
+        ## Major allel
+        majAllel = max(basesCounts, key=lambda k: basesCounts[k])
+        majAllelFreq = divided(basesCounts[majAllel], float(sum(basesCounts.values())))
+        ## homopolymer count
+        homoseq = "--"
+        test_start_home = start_b - 2 if start_b - 2 > 0 else 0
+        homo = homopolymer.search(faidx[chrom][test_start_home:start_b + 4])
+        if (homo):
+            homoseq = homo.group(1).upper()
+
+        deletions_o = len([read for read in reads
+                           if read.is_del and rvStrand(reverse, read.alignment.is_reverse, bam_type)])
+        insertions_o = len([read for read in reads
+                            if read.indel > 0 and rvStrand(reverse, read.alignment.is_reverse, bam_type)])
+        error_o = substitutions_wo_ins_o + insertions_o + deletions_o
+        o_ref = ''#complement(ref) if reverse else ref
+        o_kmer5 = ''#reversecomplement(kmer5) if reverse else kmer5
+        o_homoseq = ''#reversecomplement(homoseq) if reverse else homoseq
+        o_kmer7 = ''#reversecomplement(kmer7) if reverse else kmer7
+        o_majAllel = ''#reversecomplement(majAllel) if reverse else majAllel
+        ## for model matching
+        m_kmer5 = kmer5
+        m_kmer7 = kmer7
+        name = None
+        outTmp.append([chrom, start_loc, end_loc, strand, name, o_ref,
+                       reads_o, matches_o, error_o,
+                       substitutions_o, deletions_o, insertions_o,
+                       divided(error_o, reads_o),
+                       divided(substitutions_o, reads_o),
+                       divided(deletions_o, reads_o),
+                       divided(insertions_o, reads_o),
+                       o_homoseq, o_kmer5, o_majAllel, majAllelFreq, o_kmer7,
+                       m_kmer5, m_kmer7
+                       ])
+    return outTmp
 

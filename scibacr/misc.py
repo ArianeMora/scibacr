@@ -20,6 +20,7 @@ from scipy.stats import fisher_exact
 from statsmodels.stats.multitest import multipletests
 from tqdm import tqdm
 import numpy as np
+import random
 import pysam
 import h5py
 from tqdm import tqdm
@@ -182,6 +183,183 @@ def chunk_data(x, y, chunk_size=7): # Use 7 as this means we can relate to eligo
     # https://stackoverflow.com/questions/13673060/split-string-into-strings-by-length
     chunks, chunk_size = len(x), chunk_size
     return [x[i:i+chunk_size] for i in range(0, chunks, chunk_size)], [y[i:i+chunk_size] for i in range(0, chunks, chunk_size)]
+
+
+def gen_mapping_gene_read_dict_meta(bam_name: str, gff: str):
+    """
+    Counts how many reads map to a gene (using metatranscriptomics data). Output featurecounts style.
+
+    NZ_CP092052.1   RefSeq  gene    1006731 1007435 .   +   .   ID=gene-AH5667_RS04895;Name=AH5667_RS04895;gbkey=Gene;gene_biotype=protein_coding;locus_tag=AH5667_RS04895;old_locus_tag=AH5667_000935
+    Parameters
+    ----------
+    bam_name: list of paths to bam files
+    gtf: path to reference (expect the transcriptome)
+    info_cols: columns to keep from the gff info file (e.g. from that last column)
+    ID=gene-AH5667_RS04895;Name=AH5667_RS04895;gbkey so selecting ['ID', 'Name'] would keep those two...
+
+    Returns
+    -------
+
+    """
+    gff = pd.read_csv(gff, header=None, sep='\t')
+    ids = gff[0].values
+    gene_info = gff[8].values
+    # ToDo: generalise
+    gff['gene_name'] = [f'{ids[i]}-{g.split(";")[-1].replace("ID=", "")}' for i, g in enumerate(gene_info)]
+    gff['id'] = [f'{c}' for i, c in enumerate(gff[0].values)]
+
+    # Finally map the gene name to the id
+    gene_dict = dict(zip(gff['gene_name'].values, gff['id'].values))
+
+    # Count the reads in a bam file
+    all_reads = defaultdict(list)
+    bam = pysam.AlignmentFile(bam_name, "rb")
+    for gene in gene_dict:
+        pos = gene_dict[gene]
+        reads = []
+        try:
+            for read in bam.fetch(pos):
+                reads.append(read.query_name)
+                # We add the name of the read so remove any second mappings
+                # We'll keep only the highest quality mapping...
+                # Check if quality > 0...
+                if read.mapping_quality > 0:
+                    all_reads[read.query_name].append(
+                        [pos, np.mean(read.query_qualities), read.mapping_quality, read.query_name])
+        except:
+            print(pos)
+    # Keep only top mapping genes
+    top_quality_gene_reads = defaultdict(list)
+    total_multi = 0
+    total_single = 0
+    for read, reads in all_reads.items():
+        if len(reads) > 1:
+            total_multi += 1
+        else:
+            total_single += 1
+        # Make only 1 map (change the index if you want something different)
+        if len(reads) != 0:  # obvs don't keep if it's empty...
+            top_quality_gene = max(reads, key=lambda item: item[1])
+            top_quality_gene_reads[top_quality_gene[0]].append(top_quality_gene[-1])
+    bam.close()
+    return top_quality_gene_reads
+
+
+def gen_mapping_gene_read_dict(bam_name: str, gff: str):
+    """
+    Counts how many reads map to a gene. Output featurecounts style.
+
+    NZ_CP092052.1   RefSeq  gene    1006731 1007435 .   +   .   ID=gene-AH5667_RS04895;Name=AH5667_RS04895;gbkey=Gene;gene_biotype=protein_coding;locus_tag=AH5667_RS04895;old_locus_tag=AH5667_000935
+    Parameters
+    ----------
+    bam_name: list of paths to bam files
+    gtf: path to reference (expect the transcriptome)
+    info_cols: columns to keep from the gff info file (e.g. from that last column)
+    ID=gene-AH5667_RS04895;Name=AH5667_RS04895;gbkey so selecting ['ID', 'Name'] would keep those two...
+
+    Returns
+    -------
+
+    """
+    gff = pd.read_csv(gff, header=None, sep='\t')
+    gene_info = gff[8].values
+    # ToDo: generalise
+    gff['gene_name'] = [g.split(';')[0].replace(f'ID=', '') for g in gene_info]
+    starts = gff[3].values
+    ends = gff[4].values
+    gff['id'] = [f'{c}:{int(starts[i]) - 1}-{int(ends[i])}' for i, c in enumerate(gff[0].values)]
+    # Finally map the gene name to the id
+    gene_dict = dict(zip(gff['gene_name'].values, gff['id'].values))
+
+    # Count the reads in a bam file
+    qualities = []
+    bam_gene_reads = {}
+    all_reads = defaultdict(list)
+    bam = pysam.AlignmentFile(bam_name, "rb")
+    for gene in gene_dict:
+        pos = gene_dict[gene]
+        reads = []
+        try:
+            for read in bam.fetch(pos):
+                reads.append(read.query_name)
+                # We add the name of the read so remove any second mappings
+                # We'll keep only the highest quality mapping...
+                # Check if quality > 0...
+                if read.mapping_quality > 0:
+                    all_reads[read.query_name].append(
+                        [pos, np.mean(read.query_qualities), read.mapping_quality, read.query_name])
+                qualities.append(read.mapping_quality)
+            bam_gene_reads[gene] = reads
+        except:
+            print(pos)
+    # Keep only top mapping genes
+    top_quality_gene_reads = defaultdict(list)
+    total_multi = 0
+    total_single = 0
+    for read, reads in all_reads.items():
+        if len(reads) > 1:
+            total_multi += 1
+        else:
+            total_single += 1
+        # Make only 1 map (change the index if you want something different)
+        top_quality_gene = max(reads, key=lambda item: item[1])
+        top_quality_gene_reads[top_quality_gene[0]].append(top_quality_gene[-1])
+    return top_quality_gene_reads
+
+def gen_training_h5py_position(bam: str, ref: str, positions: dict, output_filename: str,
+                               min_coverage=20, max_coverage=1000):
+    """
+    Generate training data using a set of positions
+    Parameters
+    ----------
+    bam: path to bam file
+    ref: reference
+    positions: dict of gene --> list of read ids
+    output_filename
+    min_coverage
+    max_coverage
+
+    Returns
+    -------
+
+    """
+    bam = pysam.AlignmentFile(bam, "rb")
+    fasta = pysam.FastaFile(ref)
+
+    out_h = h5py.File(output_filename, 'w')
+    for pos in tqdm(positions):
+        reads = []
+        try:
+            for read in bam.fetch(pos):
+                # Check if we want this read
+                if read.query_name in positions[pos]:
+                    reads.append(read)
+        except:
+            print(pos)
+        read_num = 0
+        if len(reads) > min_coverage:
+            ref_str = fasta[pos]
+            # Take a random sample if there are too many...
+            if len(reads) > max_coverage:
+                reads = random.sample(reads, max_coverage)
+            for ri, read in enumerate(reads):
+                try:
+                    if read.query_sequence is not None:
+                        seq, ref, qual, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str,
+                                                                   read.query_qualities)
+                        read_name = read.query_name
+                        seq = [ord(c) for c in seq]
+                        out_h.create_dataset(f'{pos}/{read_name}/qual', data=np.array(qual, dtype=np.int8))
+                        out_h.create_dataset(f'{pos}/{read_name}/seq', data=np.array(seq, dtype=np.int8))
+                        out_h[f'{pos}/{read_name}'].attrs['info'] = read.reference_start
+                        read_num += 1
+                        if read_num > max_coverage:
+                            break
+                except:
+                    print(read.query_name)
+    bam.close()
+    out_h.close()
+
 
 def gen_training_h5py(bam, ref, gff, output_filename, min_coverage=20, max_coverage=1000):
     bam = pysam.AlignmentFile(bam, "rb")
@@ -442,7 +620,7 @@ def write_msa_over_gene(gene_location: str, bam, ref, output_filename=None):
         fout.write(f'>Reference\n')
         fout.write(ref_str + '\n')
         for read in reads:
-            seq, ref, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str)
+            seq, ref, qual, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str, read.query_qualities)
             # Make it totally align
             seq = "-" * read.reference_start + seq + "-" * (len(ref_str) - (read.reference_start + len(seq)))
             fout.write(f'>{read.query_name}\n')
@@ -718,9 +896,9 @@ def count_reads(bam_files: list, gff: str, info_cols=['Name', 'gene', 'gene_biot
 # of the GO terms
 from scipy.stats import fisher_exact
 from statsmodels.stats.multitest import multipletests
-from sciutil import SciUtil, SciException
-from sciviso import Emapplot
-import pandas as pd
+# from sciutil import SciUtil, SciException
+# from sciviso import Emapplot
+# import pandas as pd
 
 
 def plot_clusters_go_enrichment(filename, gene_ratio_min=1, padj_max=0.05, title='GO', fig_dir='',
@@ -898,3 +1076,149 @@ def convert_gaf_to_csv(gaf_file: str, go_term_output_file: str, go_info_output_f
     gene_go_df.to_csv(go_term_output_file, index=False)
 
 
+def count_reads_meta(bam_files: list, gff: str, ignore_multimapped_reads='quality', transcriptome=True):
+    """
+    Counts how many reads map to a gene. Output featurecounts style.
+
+    NZ_CP092052.1   RefSeq  gene    1006731 1007435 .   +   .   ID=gene-AH5667_RS04895;Name=AH5667_RS04895;gbkey=Gene;gene_biotype=protein_coding;locus_tag=AH5667_RS04895;old_locus_tag=AH5667_000935
+    Parameters
+    ----------
+    bam_files: list of paths to bam files
+    gtf: path to reference (expect the transcriptome)
+    info_cols: columns to keep from the gff info file (e.g. from that last column)
+    ID=gene-AH5667_RS04895;Name=AH5667_RS04895;gbkey so selecting ['ID', 'Name'] would keep those two...
+
+    Returns
+    -------
+
+    """
+    gff = pd.read_csv(gff, header=None, sep='\t')
+    ids = gff[0].values
+    gene_info = gff[8].values
+    # ToDo: generalise
+    gff['gene_name'] = [f'{ids[i]}-{g.split(";")[-1].replace("ID=", "")}' for i, g in enumerate(gene_info)]
+    starts = gff[3].values
+    ends = gff[4].values
+    if transcriptome:
+        gff['id'] = [f'{c}:{int(starts[i]) - 1}-{int(ends[i])}' for i, c in enumerate(gff[0].values)]
+    else:
+        gff['id'] = [f'{c}' for i, c in enumerate(gff[0].values)]
+
+    # Finally map the gene name to the id
+    gene_dict = dict(zip(gff['gene_name'].values, gff['id'].values))
+    bam_counts = {}
+
+    # Count the reads in a bam file
+    qualities = []
+    for bam_name in bam_files:
+        bam_gene_reads = {}
+        all_reads = defaultdict(list)
+        bam = pysam.AlignmentFile(bam_name, "rb")
+        for gene in gene_dict:
+            pos = gene_dict[gene]
+            reads = []
+            try:
+                for read in bam.fetch(pos):
+                    reads.append(read.query_name)
+                    if ignore_multimapped_reads:
+                        # We add the name of the read so remove any second mappings
+                        # We'll keep only the highest quality mapping...
+                        # Check if quality > 0...
+                        if read.mapping_quality > 0:
+                            all_reads[read.query_name].append([gene, np.mean(read.query_qualities), read.mapping_quality])
+                        qualities.append(read.mapping_quality)
+                bam_gene_reads[gene] = reads
+            except:
+                print(pos)
+        bam_gene_counts = {}
+        # Now check for mulitmapping
+        if ignore_multimapped_reads:
+            top_quality_gene_reads = defaultdict(list)
+            total_multi = 0
+            total_single = 0
+            for read, reads in all_reads.items():
+                if len(reads) > 1:
+                    total_multi += 1
+                else:
+                    total_single += 1
+                # Make only 1 map
+                top_quality_gene = max(reads, key=lambda item: item[1])
+                top_quality_gene_reads[top_quality_gene[0]].append(top_quality_gene[1])
+            # Now get the counts for genes
+            for gene in gene_dict:
+                bam_gene_counts[gene] = len(top_quality_gene_reads[gene])
+            try:
+                print(bam_name, total_multi, total_single, total_single/(total_single + total_multi))
+            except:
+                print(bam_name, total_multi, total_single)
+        else:
+            for gene in gene_dict:
+                bam_gene_counts[gene] = len(bam_gene_reads[gene])
+
+        bam_counts[bam_name] = bam_gene_counts
+    # Now make a df
+    rows = []
+    for gene in gene_dict:
+        row = [gene]
+        for bam_name in bam_files:
+            row.append(bam_counts[bam_name].get(gene))
+        rows.append(row)
+    df = pd.DataFrame(rows, columns=['gene'] + [b.split('/')[-1].split('.')[0] for b in bam_files])
+    return df
+
+
+def gen_kmer_sliding_window_ref(ref: str, kmer_len: int, output_filename: str, genes=None):
+    """
+    Generates a positional sliding window h5 file that contains all the instances of a particular kmer.
+    Get the kmers from the reference and map them to a numpy array for fast access
+    -----------------------------------------------
+       KMER to HDF5 here we want to iterate through the
+       reference file and find where each kmer occurs
+       this is then saved as kmer-->transcript-->[list of positions of kmer start]
+
+    Parameters
+    ----------
+    ref: path to the reference transcriptome.
+    kmer_len: length of kmer
+    output_filename: string to the path of the output h5 file
+
+    Returns
+    -------
+
+    """
+    ts_dict = dict()
+    # Keeps track of which transcript this kmer is in and the ID of the position it occured at (from the first position)
+    with open(ref, 'r') as f:
+        i = 0
+        for line in f:
+            if line.startswith('>'):
+                ts = line.split(' ')[0][1:].strip()
+                if genes is not None:
+                    if ts in genes:
+                        ts_dict[ts] = None
+                        i += 1
+                else:
+                    ts_dict[ts] = None
+                    i += 1
+            else:
+                if genes is not None:
+                    if ts in genes:
+                        line = line.strip()
+                        ts_dict[ts] = line
+                else:
+                    line = line.strip()
+                    ts_dict[ts] = line
+
+    kmer_mapping = defaultdict(lambda: defaultdict(list))
+    for ts, line in ts_dict.items():
+        line = line
+        for i in range(0, len(line) - kmer_len):  # Iterate through the sequence
+            kmer = line[i:i+kmer_len]
+            kmer_mapping[kmer][ts].append(i)
+
+    kmer_h = h5py.File(output_filename, 'w')
+    for k in kmer_mapping:
+        for ts in kmer_mapping[k]:
+            kmer_h.create_dataset(f'{k}/{ts}', data=np.array(kmer_mapping[k][ts]))
+
+    kmer_h.close()
