@@ -15,7 +15,7 @@
 #                                                                             #
 ###############################################################################
 
-__title__ = 'PROJECT_NAME'
+__title__ = 'scibacr'
 __description__ = ''
 __url__ = 'https://github.com/ArianeMora/scibacr.git'
 __version__ = '1.0.0'
@@ -23,6 +23,11 @@ __author__ = 'Ariane Mora'
 __author_email__ = 'ariane.n.mora@gmail.com'
 __license__ = 'GPL3'
 
-from scibacr.misc import *
-from scibacr.rna_mod import RNAMod
 
+from scibacr.misc import *
+from scibacr.counter import *
+from scibacr.vae import *
+from scibacr.feditor import *
+from scibacr.vis import *
+
+from scibacr.minimap2_runner import Minimap2Runner
