@@ -15,7 +15,7 @@
 ###############################################################################
 import numpy as np
 from tqdm import tqdm
-from misc import alignment_from_cigar
+from scibacr.misc import alignment_from_cigar
 import matplotlib.pyplot as plt
 from collections import defaultdict
 from wordcloud import WordCloud

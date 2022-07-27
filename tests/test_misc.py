@@ -45,6 +45,10 @@ class TestExample(unittest.TestCase):
         gen_kmer_sliding_window_ref(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta', 6,
                                     'data/kmer_6.h5', genes=['NC_003210.1:1000534-1001425', 'NC_003210.1:1008129-1008879'])
 
+    def test_fasta_to_gff(self):
+        convert_transcriptome_to_gff(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta',
+                                     'data/gff.gff')
+
     def test_kmer_extraction(self):
         kmer = 'GAAGAT'
         kmer_h5 = h5py.File('data/kmer_6.h5', 'r')

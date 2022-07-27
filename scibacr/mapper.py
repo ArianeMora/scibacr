@@ -15,10 +15,10 @@
 #                                                                             #
 ###############################################################################
 
-from runner import Runner
+from scibacr.runner import Runner
 
 
-class Minimap2Runner(Runner):
+class Mapper(Runner):
     """
     This class is used to run minimap2, mainly we're interested in mapping the basecalled reads
     to the reference genome or transcriptome.
@@ -60,7 +60,7 @@ class Minimap2Runner(Runner):
                                 bed_line = [line[0], line[3], line[4], line[-1].strip(), line[5], line[6]]
                                 bed.write('\t'.join(bed_line) + '\n')
 
-    def fasta_to_bam(self, genome=False, remove_files=True) -> None:
+    def fasta_to_bam(self, genome=False, remove_files=True, mapping_tool='bwa') -> None:
         """
         Convert the fasta sequence to a sam file, then to a bam, finally sort this.
         We need this for later steps in the pipeline.
@@ -84,12 +84,19 @@ class Minimap2Runner(Runner):
                 sorted_bam = f'{self.get_output_path(sample)}{sample}.sorted.bam'
             # Run sam
             if genome:
-                self.run(['minimap2', '-ax', 'splice', '-uf', '-k14 ', '-t', '20', ref, fastq, '>', sam])
+                # ../software/bwa/./bwa mem tRNA_ref_new.fasta -W 13 -k 6 -x ont2d ecoli_tRNA/ERR6751707.fastq.gz > ERR6751707.sam
+                if mapping_tool == 'bwa': # -k 6 -x ont2d
+                    self.run(['../software/bwa/./bwa', 'mem',  ref, '-W', '13', '-k ', '6', '-x', 'ont2d', fastq, '>', sam])
+                else:
+                    self.run(['minimap2', '-ax', 'splice', '-uf', '-k14 ', '-t', '20', ref, fastq, '>', sam])
             else:  # add pre- prefix because there are sometimes issues with the size when using transcriptome
                 # https://github.com/lh3/minimap2/issues/301
                 # https://github.com/lh3/minimap2/issues/37
                 # https://github.com/lh3/minimap2/issues/358 #  '--split-prefix=pre', didn't work?
-                self.run(['minimap2', '-ax', 'splice', '-uf', '-k14 ', '-t', '20', ref, fastq, '>', sam])
+                if mapping_tool == 'bwa':
+                    self.run(['../software/bwa/./bwa', '-W', '13', '-k ', '6', '-x', 'ont2d', ref, fastq, '>', sam])
+                else:
+                    self.run(['minimap2', '-ax', 'splice', '-uf', '-k14 ', '-t', '20', ref, fastq, '>', sam])
             # Run bam
             self.run(['samtools', 'view', '-S', sam, '-bh', '-t', fasta, '>', bam])
             # Sort bam

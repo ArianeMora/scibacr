@@ -24,7 +24,7 @@ from tqdm import tqdm
 
 from collections import defaultdict
 
-from misc import alignment_from_cigar
+from scibacr.misc import alignment_from_cigar
 
 
 def chunk_data(x, y, chunk_size=7): # Use 7 as this means we can relate to eligos2

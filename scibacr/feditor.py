@@ -21,6 +21,34 @@ Contains misc functions for editing file types...
 import pandas as pd
 
 
+def convert_transcriptome_to_gff(fasta_file: str, output_gff_file: str):
+    """
+
+    Parameters
+    ----------
+    fasta_file
+    output_gff_file
+
+    Returns
+    -------
+
+    """
+    with open(fasta_file, 'r') as fin:
+        with open(output_gff_file, 'w') as fout:
+            outline = ''
+            line_label = ''
+            for line in fin:
+                if line[0] == '>':
+                    line = line.strip()
+                    # EvRCC1521_s1    EVM gene    13206   16404   .   +   .   ID=evm.EvRCC1521_s1_g1;Name=Gene_model_EvRCC1521_s1_g1
+                    line = line.split(' ')
+                    outline = f'{line[0][1:]}\tFA\tgene'
+                    line_label = ';'.join(line[1:]).strip()
+                    #>TRINITY_DN8_c1_g1_i1 len=2323 path=[0:0-2322]
+                else:
+                     fout.write(f'{outline}\t{1}\t{len(line)-2}\t.\t.\t.\t{line_label}\n')
+
+
 def dedup_gff(gff_file: str, output_file=None, feature_filter=None, source_filter=None) -> pd.DataFrame:
     """
     Removes duplicate entries from a gff file. This can be needed when mapping reads to transcriptome.

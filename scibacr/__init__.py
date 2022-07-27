@@ -30,4 +30,4 @@ from scibacr.vae import *
 from scibacr.feditor import *
 from scibacr.vis import *
 
-from scibacr.minimap2_runner import Minimap2Runner
+from scibacr.mapper import Mapper
