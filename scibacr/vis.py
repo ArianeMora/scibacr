@@ -13,6 +13,8 @@
 #    along with this program. If not, see <http://www.gnu.org/licenses/>.     #
 #                                                                             #
 ###############################################################################
+import random
+
 import numpy as np
 from tqdm import tqdm
 from scibacr.misc import alignment_from_cigar
@@ -33,7 +35,7 @@ Functions for visualisation and interpretation of data
 """
 
 
-def write_msa_over_gene(gene_location: str, bam, ref, output_filename=None):
+def write_msa_over_gene(gene_location: str, bam, ref, output_filename=None, max_reads=200, read_dict=None):
     """
     Makes a pileup over a gene and saves it as a MSA so one can view it in AliView.
 
@@ -49,9 +51,18 @@ def write_msa_over_gene(gene_location: str, bam, ref, output_filename=None):
     -------
 
     """
-    reads = []
-    for read in bam.fetch(gene_location):
-        reads.append(read)
+    if read_dict is not None:
+        reads = []
+        for read in bam.fetch(gene_location):
+            # Check if we want this read
+            if read.query_name in read_dict[gene_location]:
+                reads.append(read)
+    else:
+        reads = []
+        for read in bam.fetch(gene_location):
+            reads.append(read)
+    if len(reads) > max_reads:
+        reads = random.sample(reads, max_reads)
     output_filename = output_filename or f'reads_msa_{gene_location}.fasta'
     with open(output_filename, 'w') as fout:
         ref_str = ref[gene_location]
@@ -63,6 +74,7 @@ def write_msa_over_gene(gene_location: str, bam, ref, output_filename=None):
             seq = "-" * read.reference_start + seq + "-" * (len(ref_str) - (read.reference_start + len(seq)))
             fout.write(f'>{read.query_name}\n')
             fout.write(f'{seq}\n')
+
 
 def plot_clusters_go_enrichment(filename, gene_ratio_min=1, padj_max=0.05, title='GO', fig_dir='',
                     label_font_size=10, figsize=(5, 5), axis_font_size=8,save_fig=True,

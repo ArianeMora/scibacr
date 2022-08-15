@@ -1,3 +1,4 @@
+###############################################################################
 #                                                                             #
 #    This program is free software: you can redistribute it and/or modify     #
 #    it under the terms of the GNU General Public License as published by     #
@@ -175,11 +176,11 @@ def count_reads(bam_files: list, gff: str, info_cols=None, ignore_multimapped_re
                 vals.append(None)
         gene_to_gene_info[info[0].replace(f'ID=', '')] = vals
     for gene in gene_dict:
-        row = [gene] + gene_to_gene_info[gene]
+        row = [gene, gene_dict[gene]] + gene_to_gene_info[gene]
         for bam_name in bam_files:
             row.append(bam_counts[bam_name].get(gene))
         rows.append(row)
-    df = pd.DataFrame(rows, columns=['gene'] + info_cols + [b.split('/')[-1].split('.')[0] for b in bam_files])
+    df = pd.DataFrame(rows, columns=['gene', 'id'] + info_cols + [b.split('/')[-1].split('.')[0] for b in bam_files])
     return df
 
 
@@ -210,7 +211,7 @@ def count_reads_meta(bam_files: list, gff: str, ignore_multimapped_reads='qualit
     ids = gff[0].values
     gene_info = gff[8].values
     # ToDo: generalise
-    gff['gene_name'] = [f'{ids[i]}-{g.split(";")[-1].replace("ID=", "")}' for i, g in enumerate(gene_info)]
+    gff['gene_name'] = [g.strip() for i, g in enumerate(gene_info)]
     starts = gff[3].values
     ends = gff[4].values
     if transcriptome:
@@ -273,11 +274,11 @@ def count_reads_meta(bam_files: list, gff: str, ignore_multimapped_reads='qualit
     # Now make a df
     rows = []
     for gene in gene_dict:
-        row = [gene]
+        row = [gene, gene_dict[gene]]
         for bam_name in bam_files:
             row.append(bam_counts[bam_name].get(gene))
         rows.append(row)
-    df = pd.DataFrame(rows, columns=['gene'] + [b.split('/')[-1].split('.')[0] for b in bam_files])
+    df = pd.DataFrame(rows, columns=['gene_name', 'id'] + [b.split('/')[-1].split('.')[0] for b in bam_files])
     return df
 
 

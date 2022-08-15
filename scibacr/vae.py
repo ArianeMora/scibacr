@@ -138,10 +138,10 @@ def get_kmer_encodings(kmer: str, kmer_h5: str, training_bams: list, num_samples
                                 enc.flatten()))  # Want to flatten it so that we can get it easy
             except:
                 nn += 0
-            print(bam, len(encodings))
-        df = pd.DataFrame(encodings)
-        df = df.rename(columns={0: 'Run', 1: 'kmer', 2: 'Gene', 3: 'ID', 4: 'Start'})
-        return df
+        print(bam, len(encodings))
+    df = pd.DataFrame(encodings)
+    df = df.rename(columns={0: 'Run', 1: 'kmer', 2: 'Gene', 3: 'ID', 4: 'Start'})
+    return df
 
 
 def gen_training_h5py_position(bam: str, ref: str, positions: dict, output_filename: str,
@@ -229,3 +229,99 @@ def one_hot_gencode(seq, qual):
             encoded[3, i] = None
     return encoded
 
+def create_train_chunked_set(training_files: list, kmer_len: int, genes=None, max_read_count=10):
+    """
+
+    Parameters
+    ----------
+    training_files
+    kmer_len
+    genes
+    max_read_count
+
+    Returns
+    -------
+
+    """
+    encodings = []
+    nn = 0
+    for training_ds in training_files:
+        run_h5 = h5py.File(training_ds, 'r')
+        for gene in run_h5:
+            if genes is None or gene in genes:
+                reads = [r for r in run_h5[gene]]
+                # This also stops us from getting super over represented seqs
+                if len(reads) > max_read_count:
+                    reads = random.sample(reads, max_read_count)
+                for read in reads:
+                    try:
+                        # Get the length of the dataset
+                        seq = [chr(s) for s in run_h5[gene][read]['seq']]
+                        qual = [r for r in run_h5[gene][read]['qual']]
+                        start = run_h5[gene][read].attrs['info']
+                        # Chunk and go through each ....
+                        seq = ["*"] * start + seq
+                        qual = [None] * start + qual
+                        # Chunk the data...
+                        chunked_seq, chunked_qual = chunk_data(seq, qual, kmer_len)
+                        # get encoder the kmer into a one hot encoded version
+                        # Now we want to one hot encode the seq but add in the qual info...
+                        for i, s in enumerate(chunked_seq):
+                            # Remove the start and the ends
+                            if None not in chunked_qual[i]:
+                                enc = one_hot_gencode(s, chunked_qual[i])
+                                encodings.append([training_ds, gene, i, i*kmer_len] + list(enc.flatten()))
+                    except:
+                        nn += 0
+        run_h5.close()
+    df = pd.DataFrame(encodings)
+    df = df.rename(columns={0: 'Run', 1: 'Gene', 2: 'ID', 3: 'Start'})
+    return df
+
+
+def gen_training_h5py(bam, ref, positions: list, output_filename, min_coverage=20, max_coverage=1000):
+    """
+    Generates training H5 py files for a range of positions,
+    Parameters
+    ----------
+    bam
+    ref
+    positions
+    output_filename
+    min_coverage
+    max_coverage
+
+    Returns
+    -------
+
+    """
+    bam = pysam.AlignmentFile(bam, "rb")
+    fasta = pysam.FastaFile(ref)
+    out_h = h5py.File(output_filename, 'w')
+    for pos in tqdm(positions):
+        reads = []
+        try:
+            for read in bam.fetch(pos):
+                reads.append(read)
+        except:
+            print(pos)
+        read_num = 0
+        if len(reads) > min_coverage:
+            ref_str = fasta[pos]
+            for ri, read in enumerate(reads):
+                try:
+                    if read.query_sequence is not None:
+                        seq, ref, qual, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str,
+                                                                   read.query_qualities)
+                        read_name = read.query_name
+                        # Save sequence and quality for the read
+                        seq = [ord(c) for c in seq]
+                        out_h.create_dataset(f'{pos}/{read_name}/qual', data=np.array(qual, dtype=np.int8))
+                        out_h.create_dataset(f'{pos}/{read_name}/seq', data=np.array(seq, dtype=np.int8))
+                        out_h[f'{pos}/{read_name}'].attrs['info'] = read.reference_start
+                        read_num += 1
+                        if read_num > max_coverage:
+                            break
+                except:
+                    print(read.query_name)
+    bam.close()
