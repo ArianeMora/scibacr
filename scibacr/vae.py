@@ -27,7 +27,7 @@ from collections import defaultdict
 from scibacr.misc import alignment_from_cigar
 
 
-def chunk_data(x, y, chunk_size=7): # Use 7 as this means we can relate to eligos2
+def chunk_data(x, y, chunk_size=7):  # Use 7 as this means we can relate to eligos2
     # https://stackoverflow.com/questions/13673060/split-string-into-strings-by-length
     chunks, chunk_size = len(x), chunk_size
     return [x[i:i+chunk_size] for i in range(0, chunks, chunk_size)], [y[i:i+chunk_size] for i in range(0, chunks, chunk_size)]
@@ -228,6 +228,7 @@ def one_hot_gencode(seq, qual):
             encoded[2, i] = None
             encoded[3, i] = None
     return encoded
+
 
 def create_train_chunked_set(training_files: list, kmer_len: int, genes=None, max_read_count=10):
     """

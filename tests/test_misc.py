@@ -66,6 +66,9 @@ class TestExample(unittest.TestCase):
                                    output_filename='data/training_meta.h5',
                                    min_coverage=20, max_coverage=100)
 
+    def test_epinano(self):
+        # python $EPINANO_HOME/Epinano_Variants.py -n 6 -R reference.fasta -b sample.reads.bam -s  $EPINANO_HOME/misc/sam2tsv.jar --type t
+        os.system('python ')
     def test_counts_meta(self):
         df = count_reads_meta([f'data/WT-K12_MG1655_genome.sorted.bam'], f'data/ssu_all_r207_gr1400.gff', transcriptome=False)
         df.to_csv('data/metagenome.csv')
@@ -108,7 +111,8 @@ class TestExample(unittest.TestCase):
     def test_msa(self):
         ref = pysam.FastaFile(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta')
         pos = 'NC_003210.1:1546342-1546531'
-        write_msa_over_gene(pos, f'data/SRR13212638.sorted.bam', ref, 'data/msa.fasta')
+        bam = pysam.AlignmentFile(f'data/SRR13212638.sorted.bam', "rb")
+        write_msa_over_gene(pos, bam, ref, 'data/msa.fasta')
 
     def test_extract_quality(self):
         data = h5py.File(f'data/SRR13212638.h5', 'r')
@@ -126,7 +130,6 @@ class TestExample(unittest.TestCase):
                         break
             break
 
-
     def test_training_from_h5py(self):
         # Check that we can get the same as we got in the csv
         gene = 'NC_003210.1:1546342-1546531'  #
@@ -138,7 +141,6 @@ class TestExample(unittest.TestCase):
         print(data[gene][read]['seq'])
         qual = [s for s in data[gene][read]['qual']]
         print(len(seq), len(qual))
-
 
     def test_training_gen(self):
         samfile = pysam.AlignmentFile(f'data/SRR13212638.sorted.bam', "rb")
@@ -177,7 +179,6 @@ class TestExample(unittest.TestCase):
     def test_count_reads(self):
         read_df = count_reads([f'data/SRR13212638.sorted.bam'], f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genes-RNA.gff')
         read_df.to_csv(f'data/counts.csv', index=False)
-
 
     def test_cov(self):
         samfile = pysam.AlignmentFile(f'data/SRR13212638.sorted.bam', "rb")
@@ -330,6 +331,12 @@ class TestExample(unittest.TestCase):
         """
         SRR13212638.113019	0	NC_003210.1:1013474-1014527	1	60	19S6M1D3M1D9M1I14M1D15M3D28M1D12M1D15M1D35M1I22M1D41M2D20M1D4M1D43M1I15M2D20M1I6M1I20M1I22M2D7M2D13M1I7M1D48M1I19M1D10M1D3M1D10M1D2M1D11M1S	*00	ACACTAAAGGAGGAATTTTTTGTCAACGATCAAATACAAAAAGAAACAATGCAAAAATTAAAGAATTATCTATCCCAAGCCCAACTGGCAATACAGGAAAATCATCGAAAACTGGCAAAAGATTGGATGCTTCAAAAATCCCTTACCATTTAAACAACAAAAGGTGGATTAATCGCAACGTTCCTGGGAAAGACGACACGAAACACCGTATGCTAACCGCCTGTGGATACGCTGGGTGCAAGCTTGAGAAATTAAAGCAGACGGACGATTACTTTTAACCTTAATTGGAGGGCTACCGTTTTAACGATTGAAGGCGAATATTGTCACCATTGGAGACAAGTGATGGAGATTTCGTATAGTGGCACCATTTTAATGTCAAACTTGTCCATGTTTATAAAAGATGTTGGACTGCTGAGCGTAATGACAAAAATATGGAAGTTCGCTAAGATGTAAAAAGCATTAGATGCAGACAAGTTCGTGCGTTGAATAGAAGTGGGATTTTGTTTCG	%'$'0010/C=58DB>A;>;4<6&'2461&/,87<>><**+=>9==:2005%/3=>>D:;-*+>94?F;2>=:-;BE?+6;:/../5<325084134<78<>;>65AFGD=A>;6:5:9FAC442<BB@,(7.1:<B@5&:.>4:<?:-*-62$-4>=?=>?B?D=>7.26//%2,3@:?%/-.%%7<5-3=:04/.+35,,)+$%#2,)-82.+'(,2.##(*3?110*+2++++%$""#/##%$,3&68999<<B11?)).>01G**))))&%%('($().'/078'53:5H),1=FKCA<0.3?:<:QF8<:@@4(-607+$$.0*/3.*)7>;69D@BDE?=FAB>=9->7<27<DHE:6;681?@?;28>57::93):?3-64372*560=?;=<0+(*::9@7?<58D<=D=+553B:3:9:99:502C559887735$/<25<114435<4&'0$<81<:345357700064<):%*5,,*(>&'7&*2>&&&&&8$$$$6	NM:i:69	ms:i:288	AS:i:285	nn:i:0	ts:A:+	tp:A:P	cm:i:29	s1:i:202	s2:i:0	de:f:0.124rl:i:0
         """
+        # #Ref,pos,base,strand,cov,q_mean,q_median,q_std,mis,ins,de
+        #  python Epinano_Predict.py  --predict /Users/ariane/Documents/code/scibacr/tests/data/SRR13212638.sorted.plus_strand.per.site.csv --out_prefix some_sample.modification --columns=7,8,10 --model models/rrach.q3.mis3.del3.linear.dump
+        #
+        # /Users/ariane/Documents/code/scibacr/tests/data/SRR13212638.sorted.bam
+        # /Users/ariane/Documents/code/scibacr/tests/data/SRR13212638.sorted.plus_strand.per.site.csv
+        # /Users/ariane/Documents/code/scibacr/tests/data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta
         samfile = pysam.AlignmentFile(f'data/SRR13212638.sorted.bam', "rb")
         ref = pysam.FastaFile(f'data/SRR13212638_GCF_000196035.1_ASM19603v1_genomic_transcripts.fasta')
         pos = 'NC_003210.1:1013474-1014527'
