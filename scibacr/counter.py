@@ -441,8 +441,6 @@ def gen_mapping_gene_read_dict_meta(bam_name: str, gff: str):
     return top_quality_gene_reads
 
 
-
-
 def gen_mapping_gene_read_dict_transcriptome(bam_name: str, gff: str):
     """
     Counts how many reads map to a gene. Output featurecounts style.
