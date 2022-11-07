@@ -199,6 +199,81 @@ def gen_training_h5py_position(bam: str, ref: str, positions: dict, output_filen
     out_h.close()
 
 
+def write_msa_over_genes(positions: dict, bam, ref, output_filename=None, min_coverage=20, max_coverage=200, k=8):
+    """
+    Makes a pileup over a gene and saves it as a MSA so one can view it in AliView.
+
+    Rows are the reads, columns are the columns in the reference. Insertions are ignored.
+    Parameters
+    ----------
+    gene_location: location (chr:start-end) note start might need to be -1 depending on how the transcriptome was created
+    bam: bam file read in by pysam, pysam.AlignmentFile(f'data/SRR13212638.sorted.bam', "rb")
+    ref: fasta file read in by pysam, pysam.FastaFile(sam/bam file)
+    output_filename
+
+    Returns
+    -------
+
+    """
+    bam = pysam.AlignmentFile(bam, "rb")
+    fasta = pysam.FastaFile(ref)
+    rows_all = []
+    for pos in tqdm(positions):
+        reads = []
+        try:
+            for read in bam.fetch(pos):
+                # Check if we want this read
+                if read.query_name in positions[pos]:
+                    reads.append(read)
+        except:
+            x = 1
+        read_num = 0
+        output_filename = output_filename or f'reads_{bam.replace(".bam", "")}.csv'
+
+        if len(reads) > min_coverage:
+            ref_str = fasta[pos]
+            seqs = []
+            # Take a random sample if there are too many...
+            if len(reads) > max_coverage:
+                reads = random.sample(reads, max_coverage)
+                for read in reads:
+                    if read.query_sequence is not None:
+                        seq, ref, qual, ins = alignment_from_cigar(read.cigartuples, read.query_sequence, ref_str,
+                                                                   read.query_qualities)
+                        # Make it totally align
+                        seq = "-" * read.reference_start + seq + "-" * (
+                                    len(ref_str) - (read.reference_start + len(seq)))
+                        seqs.append(list(seq))
+
+            # Again check that we actually had enough!
+            if len(seqs) > min_coverage:
+
+                seq_df = pd.DataFrame(seqs)
+                for col in seq_df:
+                    if col - k / 2 > 0:
+                        vc = seq_df[col].values
+                        ref_seq = vc[0]
+                        if ref_seq != '-':
+                            # Check if there are at least 25% with a different value compared to the reference.
+                            values = vc[vc != '-']
+                            non_ref = len(values)
+                            other = len(values[values != ref_seq])
+                            a = len(vc[vc == 'A'])
+                            t = len(vc[vc == 'T'])
+                            g = len(vc[vc == 'G'])
+                            c = len(vc[vc == 'C'])
+                            nn = len(vc[vc == '-'])
+                            km = int(k / 2)
+                            kmer = ref_str[col - km:col + km]
+                            rows_all.append([pos, col, ref_seq, other / non_ref, a, t, g, c, nn, kmer])
+
+    bam.close()
+    fasta.close()
+    seq_df = pd.DataFrame(rows_all)
+    seq_df.columns = ['gene_name', 'position', 'ref', 'percent_nonRef', 'A', 'T', 'G', 'C', 'N', 'kmer']
+    seq_df.to_csv(output_filename, index=False)
+
+
 def one_hot_gencode(seq, qual):
     """
     One hot encode but put in the quality info of that position

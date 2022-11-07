@@ -46,7 +46,7 @@ setup(name='scibacr',
           ]
       },
       install_requires=['pandas', 'numpy', 'pysam', 'tqdm', 'h5py', 'sciviso', 'statsmodels',
-                        'scipy', 'scivae>=1.0.8'],
+                        'scipy', 'scivae>=1.0.8', 'wordcloud'],
       python_requires='>=3.8',
       data_files=[("", ["LICENSE"])]
       )
